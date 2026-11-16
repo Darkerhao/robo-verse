@@ -1,0 +1,89 @@
+<script setup lang="ts">
+import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { createScene, type SceneStats } from '@/three/createScene'
+import type { RobotPart } from '@/three/RobotParts'
+import { useSimulationStore } from '@/stores/simulation'
+import type { CameraView, RobotId } from '@/types/robot'
+import AppIcon from './AppIcon.vue'
+const sim = useSimulationStore()
+const props = defineProps<{ overview?: boolean }>()
+const emit = defineEmits<{ select: [id?: RobotId] }>()
+const router = useRouter()
+const host = ref<HTMLDivElement>()
+const panel = ref<HTMLElement>()
+const loading = ref(true)
+const error = ref('')
+const progress = ref(0)
+const loadStage = ref('准备本地机械模型与三维场景')
+const hovered = ref<RobotId>()
+const hoveredPart = ref<RobotPart>()
+const selected = ref<RobotId>()
+const stats = ref<SceneStats>({ fps: 0, calls: 0, geometries: 0, textures: 0 })
+const activeView = ref<CameraView>('perspective')
+let scene: ReturnType<typeof createScene> | undefined
+let mounted = true
+const views: { id: CameraView; label: string }[] = [{ id: 'perspective', label: '透视' }, { id: 'front', label: '正视' }, { id: 'side', label: '侧视' }, { id: 'top', label: '顶视' }]
+async function init() {
+  scene?.dispose(); scene = undefined; error.value = ''; loading.value = true; progress.value = 0; hovered.value = undefined; hoveredPart.value = undefined; selected.value = undefined
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  if (!mounted || !host.value) return
+  try {
+    scene = createScene(host.value, () => ({ robot: sim.selectedId, robots: sim.snapshot.robots, paused: sim.snapshot.paused, grid: sim.grid, quality: sim.quality }), value => { stats.value = value }, message => { error.value = message; loading.value = false }, {
+      overview: props.overview,
+      onProgress: (value, stage) => { progress.value = value; loadStage.value = stage },
+      onReady: () => { loading.value = false },
+      onHover: (id, part) => { hovered.value = id; hoveredPart.value = part },
+      onSelect: id => { selected.value = id; if (id) activeView.value = 'perspective'; emit('select', id) },
+      onOpen: id => { sim.select(id); void router.push(`/${id}`) },
+    })
+    activeView.value = 'perspective'
+  }
+  catch (cause) { error.value = cause instanceof Error ? `无法启动三维场景：${cause.message}` : '无法启动 WebGL，请检查浏览器图形加速设置。' }
+  finally { if (error.value) loading.value = false }
+}
+function changeView(view: CameraView) { activeView.value = view; scene?.view(view) }
+watch(() => sim.selectedId, () => { if (!props.overview) changeView('perspective') })
+async function fullscreen() {
+  try { if (document.fullscreenElement) await document.exitFullscreen(); else await panel.value?.requestFullscreen() }
+  catch { sim.error = '浏览器未允许全屏，请检查浏览器的全屏权限。' }
+}
+onMounted(init)
+onUnmounted(() => { mounted = false; scene?.dispose() })
+</script>
+
+<template>
+  <section ref="panel" class="viewport panel" :class="{ 'hall-viewport': overview }" :data-robot="overview ? 'both' : sim.selectedId" :data-render-stats="JSON.stringify(stats)" :data-load-progress="progress">
+    <div ref="host" class="canvas-host" />
+    <div class="scene-top"><div class="scene-label"><span class="dot" /> LIVE SCENE <span class="scene-slash">/</span><span>实验室环境</span></div><div class="scene-tags"><span class="scene-tag">PBR</span><span class="scene-tag">{{ sim.quality.toUpperCase() }}</span><button class="scene-icon" title="切换全屏" aria-label="切换全屏" @click="fullscreen"><AppIcon name="expand" /></button></div></div>
+    <div v-if="!overview" class="model-label"><span class="eyebrow">{{ sim.definition.category }} · DIGITAL TWIN</span><h2>{{ sim.definition.name }}<span>{{ sim.selectedId === 'quadruped' ? 'QUADRUPED' : 'HUMANOID' }}</span></h2><span class="model-id mono">{{ sim.definition.serial }}</span></div>
+    <div v-if="overview && (hovered || selected)" class="pick-label">{{ (hovered || selected) === 'quadruped' ? '四足机器人 / QUADRUPED' : '人形机器人 / HUMANOID' }}<small>点击聚焦 · 双击进入数字孪生</small></div>
+    <div v-if="!overview && hoveredPart" class="part-label" :data-part-id="hoveredPart.id"><span>{{ hoveredPart.name }}</span><small class="mono" :title="hoveredPart.id">{{ hoveredPart.id }}</small></div>
+    <div class="scene-toolbar"><button class="scene-icon" :class="{ active: sim.grid }" title="显示或隐藏网格" aria-label="切换网格" :aria-pressed="sim.grid" @click="sim.grid = !sim.grid"><AppIcon name="grid" /></button><span /><button class="scene-icon" title="放大" aria-label="放大模型" @click="scene?.zoom(.8)"><AppIcon name="plus" /></button><button class="scene-icon" title="缩小" aria-label="缩小模型" @click="scene?.zoom(1.25)"><AppIcon name="minus" /></button><span /><button class="scene-icon" title="恢复默认视角" aria-label="恢复默认视角" @click="changeView('perspective')"><AppIcon name="target" /></button></div>
+    <div class="scene-bottom"><div class="axis-gizmo" aria-label="三维坐标轴"><i class="axis-y" /><i class="axis-x" /><i class="axis-z" /><span class="y">Y</span><span class="x">X</span><span class="z">Z</span><b /></div><div v-if="!overview" class="camera-switch" aria-label="相机视角"><button v-for="view in views" :key="view.id" :class="{ active: activeView === view.id }" :aria-pressed="activeView === view.id" @click="changeView(view.id)">{{ view.label }}</button></div><span v-else class="hall-interaction">点击机器人聚焦 · 双击进入</span><div class="scene-performance mono"><span class="dot" /> {{ stats.fps || '—' }} FPS</div></div>
+    <div class="scene-help"><span>左键旋转</span><i /> <span>滚轮缩放</span><i /> <span>右键平移</span><span class="gait-note">原地步态仿真 · 1 单位 = 1 m</span></div>
+    <div v-if="loading || error" class="scene-overlay" role="status"><div v-if="loading" class="loading-ring" /><AppIcon v-else name="cube" /><h3>{{ loading ? '正在构建数字孪生场景' : '场景暂不可用' }}</h3><p>{{ loading ? loadStage : error }}</p><template v-if="loading"><progress :value="progress" max="100" aria-label="模型与场景加载进度" /><span class="mono">{{ progress }}%</span></template><button v-if="error" class="btn btn-primary" @click="init"><AppIcon name="reset" />重新加载场景</button></div>
+    <span v-if="sim.current.emergency" class="freeze-indicator emergency"><AppIcon name="stop" />急停已锁定</span><span v-else-if="sim.snapshot.paused" class="freeze-indicator"><AppIcon name="pause" />仿真已暂停</span>
+  </section>
+</template>
+
+<style scoped lang="less">
+.viewport { height: 100%; min-height: 460px; position: relative; overflow: hidden; background: #1b2225; &:fullscreen { width: 100vw; height: 100vh; border-radius: 0; } }
+.part-label { position: absolute; top: 156px; left: 26px; max-width: min(240px, 60%); padding: 8px 10px; border-left: 2px solid var(--cyan); background: #070b14df; pointer-events: none; color: var(--cyan); font-size: 11px; small { display: block; margin-top: 5px; font-size: 8px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
+.pick-label { position: absolute; right: 8%; top: 72px; color: var(--cyan); font-size: 11px; pointer-events: none; small { display: block; margin-top: 8px; color: var(--muted); font-size: 9px; } }.hall-interaction { color: var(--muted); font-size: 10px; }.hall-viewport { .scene-top { top: 22px; }.scene-toolbar { top: auto; bottom: 160px; right: 24px; }.scene-help { background: #070b14cc; }.pick-label { top: 80px; } }.scene-overlay progress { width: 180px; height: 4px; accent-color: var(--accent); }
+.canvas-host { position: absolute; inset: 0 0 30px; :deep(canvas) { display: block; width: 100%; height: 100%; touch-action: none; } }
+.scene-top { position: absolute; top: 17px; left: 21px; right: 17px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
+.scene-label { display: flex; align-items: center; gap: 8px; font-size: 9px; letter-spacing: 1px; color: #a6b3ac; .dot { color: var(--accent); } > span:last-child { letter-spacing: .2px; font-size: 10px; } }.scene-slash { margin: 0 3px; color: #5d6b62; }
+.scene-tags { display: flex; align-items: center; gap: 6px; pointer-events: auto; }.scene-tag { font-size: 8px; letter-spacing: .7px; padding: 4px 6px; border: 1px solid #41504677; border-radius: 4px; color: #a2b1aa; }
+.scene-icon { display: grid; place-items: center; width: 30px; height: 31px; border-radius: 5px; background: transparent; color: #a1b0a8; .icon { width: 15px; height: 15px; } &:hover, &.active { color: var(--accent); background: #a0bb7412; } }
+.model-label { position: absolute; top: 76px; left: 26px; pointer-events: none; .eyebrow { font-size: 8px; letter-spacing: 1.2px; } h2 { font-size: 31px; font-weight: 500; letter-spacing: -1.1px; margin: 6px 0 6px; display: flex; align-items: center; gap: 12px; span { font-size: 8px; letter-spacing: 1.2px; font-weight: 400; color: #72897f; border-left: 1px solid #536458; padding-left: 12px; } }.model-id { font-size: 8px; letter-spacing: 1px; color: #7d8e87; } }
+.scene-toolbar { position: absolute; right: 17px; top: 38%; background: #151b1bba; border: 1px solid #41504688; backdrop-filter: blur(8px); padding: 3px; border-radius: 7px; display: grid; gap: 3px; > span { height: 1px; background: #354237; margin: 2px 5px; } }
+.scene-bottom { position: absolute; bottom: 53px; left: 24px; right: 20px; display: flex; align-items: flex-end; justify-content: space-between; pointer-events: none; }
+.camera-switch { pointer-events: auto; display: flex; gap: 3px; padding: 4px; border: 1px solid #3d4842; border-radius: 6px; background: #171e1dce; backdrop-filter: blur(10px); button { font-size: 10px; background: transparent; border-radius: 3px; color: #8f9d95; padding: 6px 13px; &.active { background: #39462f; color: #d1eba4; } &:hover { color: var(--accent); } } }
+.scene-performance { color: #99b590; font-size: 9px; display: flex; align-items: center; gap: 6px; padding-bottom: 10px; .dot { width: 4px; height: 4px; } }
+.axis-gizmo { width: 50px; height: 60px; position: relative; font-size: 8px; i { position: absolute; width: 1px; height: 24px; top: 13px; left: 23px; transform-origin: bottom; } .axis-y { background: #a6b887; }.axis-x { background: #d3867b; transform: rotate(120deg); }.axis-z { background: #81a5cb; transform: rotate(-115deg); } span { position: absolute; }.y { top: 0; left: 20px; color: #a6b887; }.x { top: 43px; left: 43px; color: #d3867b; }.z { top: 42px; left: 0; color: #81a5cb; } b { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: #a5b0a2; top: 34px; left: 21px; } }
+.scene-help { position: absolute; bottom: 0; left: 0; right: 0; height: 30px; padding: 0 18px; display: flex; align-items: center; gap: 9px; border-top: 1px solid #35403b; background: #191f21; font-size: 8px; color: #75827b; i { width: 2px; height: 2px; border-radius: 50%; background: #66736b; } .gait-note { margin-left: auto; color: #5e7067; } }
+.scene-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px; background: #1a2023f5; z-index: 3; padding: 30px; text-align: center; p { color: var(--muted); font-size: 12px; max-width: 360px; line-height: 1.8; } > .icon { width: 40px; height: 40px; color: var(--accent); } }.loading-ring { width: 32px; height: 32px; border: 2px solid #4e5d43; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }
+.freeze-indicator { position: absolute; top: 68px; right: 18px; display: flex; align-items: center; gap: 6px; padding: 7px 9px; color: var(--warning); background: #2c291fce; border: 1px solid #7a6541; font-size: 10px; border-radius: 5px; .icon { width: 12px; height: 12px; } &.emergency { color: var(--danger); border-color: #764c4c; background: #3c2528ce; } }
+@media(max-width:550px) { .viewport { min-height: 390px; }.model-label { left: 20px; top: 69px; h2 { font-size: 27px; span { display: none; } } }.scene-top { left: 16px; }.scene-label { font-size: 7px; }.scene-bottom { left: 12px; right: 12px; }.camera-switch button { padding: 7px 9px; }.scene-help .gait-note { display: none; } }
+</style>
