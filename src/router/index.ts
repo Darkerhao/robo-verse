@@ -7,6 +7,7 @@ export const router = createRouter({
     { path: '/quadruped', name: 'quadruped', component: () => import('@/views/WorkbenchView.vue'), meta: { title: '四足机器人数字孪生', section: 'QUADRUPED', robot: 'quadruped' } },
     { path: '/humanoid', name: 'humanoid', component: () => import('@/views/WorkbenchView.vue'), meta: { title: '人形机器人数字孪生', section: 'HUMANOID', robot: 'humanoid' } },
     { path: '/lab', name: 'lab', component: () => import('@/views/LabView.vue'), meta: { title: '全息实验室', section: 'LAB' } },
+    { path: '/perception', name: 'perception', component: () => import('@/views/PerceptionView.vue'), meta: { title: 'AI 感知中心', section: 'AI PERCEPTION' } },
     { path: '/robots', name: 'robots', component: () => import('@/views/RobotsView.vue'), meta: { title: '机器人管理', section: '设备中心' } },
     { path: '/skills', name: 'skills', component: () => import('@/views/SkillsView.vue'), meta: { title: '动作技能库', section: '应用中心' } },
     { path: '/telemetry', name: 'telemetry', component: () => import('@/views/TelemetryView.vue'), meta: { title: '遥测数据', section: '数据中心' } },

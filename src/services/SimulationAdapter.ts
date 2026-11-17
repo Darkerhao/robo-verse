@@ -1,6 +1,8 @@
 import { actions, robots } from '@/config/robots'
 import { endEffectors, joints, rigs } from '@/config/joints'
 import { blendPoses, clamp, copyPose, forwardEndEffector, inverseEndEffector, isMoving, isTurning, motionPose, neutralPose, smoothStep } from '@/simulation/kinematics'
+import { PerceptionEngine } from '@/simulation/perception'
+import { homePosition } from '@/config/perception'
 import type { RobotAction, RobotAdapter, RobotCommand, RobotId, RobotPose, RobotState, SimulationSnapshot } from '@/types/robot'
 
 interface RecordedFrame extends RobotPose { time: number; heading: number }
@@ -16,12 +18,13 @@ const normalizeHeading = (angle: number) => ((angle % 360) + 360) % 360
 const headingDifference = (target: number, current: number) => ((target - current + 540) % 360) - 180
 
 function initialRobot(id: RobotId): RobotState {
-  return { ...neutralPose(id), id, action: 'stand', targetSpeed: id === 'quadruped' ? 1 : .8, speed: 0, heading: 0, targetHeading: 0, phase: 0, actionTime: 0, motionRate: 1, loop: true, controlMode: 'motion', jointTargets: null, ikTarget: null, recording: false, recordedFrames: 0, recordedDuration: 0, replayTime: 0, battery: id === 'quadruped' ? 98 : 94, temperature: 36, power: 24, cpu: 12, emergency: false }
+  return { ...neutralPose(id), id, worldPosition: [...homePosition], action: 'stand', targetSpeed: id === 'quadruped' ? 1 : .8, speed: 0, heading: 0, targetHeading: 0, phase: 0, actionTime: 0, motionRate: 1, loop: true, controlMode: 'motion', jointTargets: null, ikTarget: null, recording: false, recordedFrames: 0, recordedDuration: 0, replayTime: 0, battery: id === 'quadruped' ? 98 : 94, temperature: 36, power: 24, cpu: 12, emergency: false }
 }
 
 export class SimulationAdapter implements RobotAdapter {
   readonly mode = 'simulation' as const
-  private state: SimulationSnapshot = { time: 0, paused: false, robots: { quadruped: initialRobot('quadruped'), humanoid: initialRobot('humanoid') } }
+  private state: Omit<SimulationSnapshot, 'perception'> = { time: 0, paused: false, robots: { quadruped: initialRobot('quadruped'), humanoid: initialRobot('humanoid') } }
+  private perception = new PerceptionEngine()
   private listeners = new Set<(snapshot: SimulationSnapshot) => void>()
   private timer?: ReturnType<typeof setInterval>
   private sessions: Record<RobotId, MotionSession> = { quadruped: session(), humanoid: session() }
@@ -40,10 +43,10 @@ export class SimulationAdapter implements RobotAdapter {
   }
 
   snapshot(): SimulationSnapshot {
-    return { ...this.state, robots: Object.fromEntries(Object.values(this.state.robots).map(robot => {
+    return { ...this.state, perception: this.perception.snapshot(), robots: Object.fromEntries(Object.values(this.state.robots).map(robot => {
       const clip = this.sessions[robot.id].clip
       const target = this.sessions[robot.id].target
-      return [robot.id, { ...robot, ...copyPose(robot), jointTargets: target ? [...target.joints] : null, ikTarget: robot.ikTarget ? { ...robot.ikTarget, position: [...robot.ikTarget.position] } : null, recordedFrames: clip.length, recordedDuration: clip.at(-1)?.time ?? 0 }]
+      return [robot.id, { ...robot, ...copyPose(robot), worldPosition: [...robot.worldPosition], jointTargets: target ? [...target.joints] : null, ikTarget: robot.ikTarget ? { ...robot.ikTarget, position: [...robot.ikTarget.position] } : null, recordedFrames: clip.length, recordedDuration: clip.at(-1)?.time ?? 0 }]
     })) as Record<RobotId, RobotState> }
   }
 
@@ -53,14 +56,24 @@ export class SimulationAdapter implements RobotAdapter {
       const stops = Object.values(this.state.robots).filter(robot => robot.emergency).map(robot => robot.id)
       this.state = { time: 0, paused: false, robots: { quadruped: initialRobot('quadruped'), humanoid: initialRobot('humanoid') } }
       this.sessions = { quadruped: session(), humanoid: session() }
+      this.perception.reset()
       stops.forEach(id => { this.state.robots[id].emergency = true; this.state.robots[id].power = 0 })
     } else if (command.type === 'pause') {
       this.state.paused = command.value
+    } else if (command.type === 'perception') {
+      const instruction = command.command, previous = this.perception.state
+      const previousRobot = this.state.robots[previous.robot], moving = ['running', 'paused'].includes(previous.route.status)
+      if (instruction.type === 'route' && instruction.action === 'start' && this.state.paused) throw new Error('请先继续仿真，再执行路线。')
+      const action = this.perception.send(instruction, this.state.robots)
+      if (instruction.type === 'enter' && moving && !previousRobot.emergency) this.beginAction(previousRobot, 'stand')
+      const robot = this.state.robots[this.perception.state.robot]
+      if (action && !robot.emergency) this.beginAction(robot, action)
     } else {
       const robot = this.state.robots[command.robot]
       const control = this.sessions[robot.id]
       if (command.type === 'emergency') {
         robot.emergency = true; robot.speed = 0; robot.power = 0; robot.recording = false
+        if (this.perception.state.active && this.perception.state.robot === robot.id) { this.perception.stop('急停已停止路线'); this.perception.state.scanning = false }
       } else if (command.type === 'release') {
         robot.emergency = false; robot.action = 'stand'; robot.speed = 0
         Object.assign(robot, neutralPose(robot.id))
@@ -70,6 +83,7 @@ export class SimulationAdapter implements RobotAdapter {
       } else {
         if (robot.emergency) throw new Error('请先解除急停，再发送运动指令。')
         if (this.state.paused) throw new Error('请先继续仿真，再发送运动指令。')
+        if (this.perception.state.active && this.perception.state.robot === robot.id && ['action', 'stop', 'turn', 'joint', 'ik', 'replay'].includes(command.type)) this.perception.stop('手动控制已停止路线')
         if (command.type === 'action') {
           if (!robots[robot.id].actions.includes(command.action)) throw new Error('当前机器人不支持此动作。')
           this.beginAction(robot, command.action)
@@ -123,6 +137,7 @@ export class SimulationAdapter implements RobotAdapter {
         }
       }
     }
+    this.perception.tick(0, this.state.time, this.state.robots[this.perception.state.robot])
     this.publish()
   }
 
@@ -130,15 +145,21 @@ export class SimulationAdapter implements RobotAdapter {
     if (this.state.paused || !Number.isFinite(dt) || dt <= 0) return
     dt = Math.min(dt, .2)
     this.state.time += dt
+    const sensingRobot = this.state.robots[this.perception.state.robot]
+    const navigating = this.perception.state.route.status === 'running'
+    this.perception.navigate(dt, sensingRobot)
+    if (navigating && this.perception.state.route.status !== 'running' && !sensingRobot.emergency) this.beginAction(sensingRobot, 'stand')
     Object.values(this.state.robots).forEach((robot, index) => {
       if (robot.emergency) return
       const control = this.sessions[robot.id], previous = copyPose(robot)
+      const followingRoute = this.perception.state.active && this.perception.state.robot === robot.id && this.perception.state.route.status === 'running'
       const moving = robot.controlMode === 'motion' && isMoving(robot.action)
       const factor = isTurning(robot.action) || robot.action === 'climb' ? .35 : robot.action === 'carry' ? .5 : 1
       const target = moving ? robot.targetSpeed * factor : 0
       robot.speed += (target - robot.speed) * (1 - Math.exp(-dt * 5))
       if (robot.speed < .001) robot.speed = 0
-      const actionDt = dt * robot.motionRate
+      // 自动移动的连续步态按实际速度推进，工作台的播放设置保留到任务结束后。
+      const actionDt = dt * (followingRoute ? 1 : robot.motionRate)
       let desired: RobotPose
       if (robot.controlMode === 'motion') {
         robot.actionTime += actionDt
@@ -153,7 +174,7 @@ export class SimulationAdapter implements RobotAdapter {
             robot.targetHeading = robot.heading
           }
         }
-        if (!robot.loop && actions[robot.action].animated && robot.actionTime >= actions[robot.action].duration - 1e-8) this.beginAction(robot, 'stand')
+        if (!followingRoute && !robot.loop && actions[robot.action].animated && robot.actionTime >= actions[robot.action].duration - 1e-8) this.beginAction(robot, 'stand')
         desired = motionPose(robot)
       } else if (robot.controlMode === 'replay') {
         robot.replayTime += actionDt
@@ -191,6 +212,7 @@ export class SimulationAdapter implements RobotAdapter {
       robot.cpu = clamp(12 + load * 38 + jointVelocity * .6 + ripple, 0, 95)
       robot.battery = Math.max(0, robot.battery - robot.power * dt / 15000)
     })
+    this.perception.tick(dt, this.state.time, sensingRobot)
     this.publish()
   }
 

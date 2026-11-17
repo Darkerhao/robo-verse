@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { mechanicalParts, part } from './RobotParts'
 import { armDimensions, joints, rigs } from '@/config/joints'
+import { sensorMounts } from '@/config/perception'
 import { blendPoses, copyPose } from '@/simulation/kinematics'
 import type { RobotId, RobotPose, RobotState } from '@/types/robot'
 
@@ -117,12 +118,12 @@ export function createRobot(id: RobotId): RobotModel {
     for (const [x, z] of rigs.quadruped.hips) leg(x!, z!, Math.sign(z!), false)
     const nose = part(body, 'sensor-bridge', '前部传感器安装桥', 'frame', [.723, .12, 0])
     box(nose, [.085, .17, .4], [0, 0, 0], 'dark', .025)
-    for (const side of [-1, 1]) optic(nose, `stereo-${side}`, `${side < 0 ? '左' : '右'}目视觉摄像头`, [.051, .013, side * .126], .046)
+    for (const side of [-1, 1]) optic(nose, `stereo-${side}`, `${side < 0 ? '左' : '右'}目视觉摄像头`, [sensorMounts.quadruped.camera[0] - nose.position.x, sensorMounts.quadruped.camera[1] - nose.position.y, side * .126], .046)
     optic(nose, 'depth', '前向深度摄像头', [.053, -.013, 0], .026)
     const sensorRack = part(body, 'sensor-rack', '雷达承载支架', 'frame')
     for (const z of [-.145, .145]) box(sensorRack, [.034, .24, .027], [.32, .144, z], 'metal', .006)
     box(sensorRack, [.14, .026, .32], [.32, .263, 0], 'dark', .006)
-    lidar(body, [.32, .286, 0])
+    lidar(body, sensorMounts.quadruped.lidar)
     const wifi = part(body, 'wireless', '无线通信模块与双天线', 'interface')
     box(wifi, [.11, .055, .35], [-.58, .24, 0], 'dark', .008)
     box(wifi, [.035, .21, .3], [-.59, .12, 0], 'metal', .008)
@@ -138,7 +139,7 @@ export function createRobot(id: RobotId): RobotModel {
     box(body, [.23, .13, .37], [0, 0, 0], 'dark', .045)
     const pelvisShell = part(body, 'pelvis-shell', '骨盆前护板', 'shell')
     hull(pelvisShell, [[-.07, -.08], [.085, -.065], [.11, .06], [-.07, .07]], .27, [.035, 0, 0], 'shell')
-    const torso = part(body, 'waist', '腰部旋转与俯仰关节', 'joint', [0, .14, 0], ['y', 'z'])
+    const torso = part(body, 'waist', '腰部旋转与俯仰关节', 'joint', sensorMounts.humanoid.waist, ['y', 'z'])
     cylinder(torso, .116, .10, [0, 0, 0], 'metal', 'y')
     cylinder(torso, .12, .018, [0, .04, 0], 'dark', 'y')
     const spine = part(torso, 'spine', '脊柱与胸部承载框架', 'frame')
@@ -163,9 +164,9 @@ export function createRobot(id: RobotId): RobotModel {
     for (let n = 0; n < 6; n++) box(cooling, [.025, .10, .015], [-.18, .30, -.1 + n * .04], 'dark', .004)
     const ports = part(torso, 'ports', '背部电源与维护接口', 'interface')
     box(ports, [.028, .047, .15], [-.18, .16, 0], 'dark', .005)
-    const neck = part(torso, 'neck', '颈部转向关节', 'joint', [0, .49, 0], ['y'])
+    const neck = part(torso, 'neck', '颈部转向关节', 'joint', sensorMounts.humanoid.neck, ['y'])
     cylinder(neck, .063, .12, [0, 0, 0], 'metal', 'y')
-    const head = part(neck, 'head', '头部承载骨架', 'frame', [.02, .18, 0])
+    const head = part(neck, 'head', '头部承载骨架', 'frame', sensorMounts.humanoid.head)
     box(head, [.17, .035, .23], [0, -.09, 0], 'metal', .009)
     box(head, [.033, .23, .07], [-.06, 0, 0], 'dark', .01)
     box(head, [.19, .022, .18], [-.01, .12, 0], 'metal', .006)
@@ -179,13 +180,13 @@ export function createRobot(id: RobotId): RobotModel {
     box(skull, [.025, .19, .235], [-.116, .005, 0], 'shell', .012)
     const face = part(head, 'face', '视觉面罩', 'shell')
     box(face, [.032, .115, .237], [.137, .014, 0], 'dark', .014)
-    for (const side of [-1, 1]) optic(head, `stereo-${side}`, `${side < 0 ? '左' : '右'}目视觉摄像头`, [.16, .025, side * .072], .026)
+    for (const side of [-1, 1]) optic(head, `stereo-${side}`, `${side < 0 ? '左' : '右'}目视觉摄像头`, [sensorMounts.humanoid.camera[0], sensorMounts.humanoid.camera[1], side * .072], .026)
     optic(head, 'depth', '头部深度摄像头', [.16, -.02, 0], .019)
     const voice = part(head, 'voice', '麦克风与语音扬声器', 'sensor')
     for (const z of [-.05, -.025, 0, .025, .05]) box(voice, [.018, .006, .012], [.138, -.076, z], 'dark', .002)
     const indicator = part(head, 'status', '头部状态指示灯', 'interface')
     box(indicator, [.016, .01, .16], [.141, .098, 0], 'light', .004)
-    lidar(head, [-.012, .153, 0], .53)
+    lidar(head, sensorMounts.humanoid.lidar, sensorMounts.humanoid.scale)
     for (const side of [-1, 1]) {
       const [legX, legZ] = rigs.humanoid.hips[side < 0 ? 0 : 1]!
       leg(legX!, legZ!, side, true)

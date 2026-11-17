@@ -20,6 +20,8 @@ const paths: Record<string, string> = {
   expand: 'M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5',
   grid: 'M3 3h18v18H3Zm6 0v18m6-18v18M3 9h18M3 15h18',
   target: 'M12 2v4m0 12v4M2 12h4m12 0h4M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0',
+  radar: 'M12 12 19 5M22 12a10 10 0 1 1-10-10M18 12a6 6 0 1 1-6-6M14 12a2 2 0 1 1-2-2',
+  route: 'M5 5a2 2 0 1 1 0 4 2 2 0 0 1 0-4m14 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4M5 9v6a4 4 0 0 0 8 0V9a3 3 0 0 1 6 0v6',
   plus: 'M12 5v14M5 12h14',
   minus: 'M5 12h14',
   dog: 'm3 6 3 3h12l3-4v8l-3 1-1 6h-2l-1-6H8l-1 6H5L4 11Z',

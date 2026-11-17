@@ -1,3 +1,5 @@
+import type { PerceptionCommand, PerceptionState } from '@/config/perception'
+
 export type RobotId = 'quadruped' | 'humanoid'
 export type RobotAction = 'idle' | 'stand' | 'walk' | 'backward' | 'trot' | 'run' | 'turnLeft' | 'turnRight' | 'sit' | 'jump' | 'crouch' | 'climb' | 'balance' | 'shake' | 'wave' | 'raiseArms' | 'bend' | 'pickUp' | 'carry' | 'handshake' | 'point' | 'grip' | 'openHand'
 export type CameraView = 'perspective' | 'front' | 'side' | 'top'
@@ -45,6 +47,7 @@ export interface RobotDefinition {
 
 export interface RobotState extends RobotPose {
   id: RobotId
+  worldPosition: Vector3Tuple
   action: RobotAction
   targetSpeed: number
   speed: number
@@ -72,9 +75,11 @@ export interface SimulationSnapshot {
   time: number
   paused: boolean
   robots: Record<RobotId, RobotState>
+  perception: PerceptionState
 }
 
 export type RobotCommand =
+  | { type: 'perception'; command: PerceptionCommand }
   | { type: 'action'; robot: RobotId; action: RobotAction }
   | { type: 'speed'; robot: RobotId; value: number }
   | { type: 'rate'; robot: RobotId; value: number }

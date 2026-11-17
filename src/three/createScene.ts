@@ -5,14 +5,17 @@ import gsap from 'gsap'
 import { createRobot } from './RobotModel'
 import { findRobotPart, isObjectVisible, type RobotPart } from './RobotParts'
 import { createRobotLab } from './RobotLab'
+import { createPerceptionScene } from './PerceptionScene'
 import type { LabPart, LabState } from '@/config/lab'
-import type { CameraView, Quality, RobotId, RobotState } from '@/types/robot'
+import type { PerceptionState } from '@/config/perception'
+import type { CameraView, Quality, RobotId, RobotState, Vector3Tuple } from '@/types/robot'
 
-export interface SceneState { robot: RobotId; robots: Record<RobotId, RobotState>; paused: boolean; grid: boolean; quality: Quality; lab?: LabState }
+export interface SceneState { robot: RobotId; robots: Record<RobotId, RobotState>; paused: boolean; grid: boolean; quality: Quality; lab?: LabState; perception?: PerceptionState }
 export interface SceneStats { fps: number; calls: number; geometries: number; textures: number }
 export interface SceneOptions {
   overview?: boolean
   lab?: boolean
+  perception?: boolean
   onProgress?: (progress: number, stage: string) => void
   onReady?: () => void
   onHover?: (id?: RobotId, part?: RobotPart) => void
@@ -21,6 +24,9 @@ export interface SceneOptions {
   onParts?: (parts: Record<RobotId, LabPart[]>) => void
   onPartSelect?: (part?: LabPart) => void
   onFrame?: (dt: number) => void
+  onObjectHover?: (id?: string) => void
+  onObjectSelect?: (id: string | null) => void
+  onGoal?: (position: Vector3Tuple) => void
 }
 
 export function createScene(host: HTMLElement, read: () => SceneState, onStats: (stats: SceneStats) => void, onError: (message: string) => void, options: SceneOptions = {}) {
@@ -30,21 +36,21 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFShadowMap
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.35
+  renderer.toneMappingExposure = options.perception ? 1.05 : 1.35
   renderer.domElement.setAttribute('aria-label', '可交互机器人三维场景：左键旋转、滚轮缩放、右键平移')
   renderer.domElement.setAttribute('role', 'img')
   host.appendChild(renderer.domElement)
   const scene = new THREE.Scene()
-  scene.fog = new THREE.FogExp2('#070B14', .06)
+  scene.fog = new THREE.FogExp2('#070B14', options.perception ? .017 : .06)
   const camera = new THREE.PerspectiveCamera(36, 1, .1, 100)
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = .075
-  controls.minDistance = options.lab ? .45 : 1.9
-  controls.maxDistance = options.overview ? 14 : options.lab ? 12 : 8
+  controls.minDistance = options.lab ? .45 : options.perception ? 1.2 : 1.9
+  controls.maxDistance = options.perception ? 36 : options.overview ? 14 : options.lab ? 12 : 8
   controls.maxPolarAngle = Math.PI / 2 - .018
   controls.minPolarAngle = .02
-  controls.maxTargetRadius = options.lab ? 4 : 2
+  controls.maxTargetRadius = options.perception ? 9 : options.lab ? 4 : 2
   controls.screenSpacePanning = true
   let environment: THREE.WebGLRenderTarget | undefined
   const pmrem = new THREE.PMREMGenerator(renderer)
@@ -52,20 +58,21 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
   try {
     environment = pmrem.fromScene(environmentScene, .03)
     scene.environment = environment.texture
-    scene.environmentIntensity = .65
+    scene.environmentIntensity = options.perception ? .25 : .65
   } finally { pmrem.dispose(); environmentScene.dispose() }
   options.onProgress?.(40, '环境光与材质已准备')
 
-  const ambient = new THREE.HemisphereLight('#d6e8ed', '#353d33', 2)
+  const ambient = new THREE.HemisphereLight('#d6e8ed', '#353d33', options.perception ? 1.1 : 2)
   scene.add(ambient)
-  const key = new THREE.DirectionalLight('#f4f8ed', 4.6)
+  const key = new THREE.DirectionalLight('#f4f8ed', options.perception ? 2.8 : 4.6)
   key.position.set(2, 5, 3); key.castShadow = true
   key.shadow.mapSize.set(2048, 2048)
   Object.assign(key.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near: .1, far: 14 })
+  if (options.perception) Object.assign(key.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, far: 25 })
   key.shadow.bias = -.0005; key.shadow.normalBias = .02
   scene.add(key)
-  const rim = new THREE.DirectionalLight('#b4d0df', 3.1); rim.position.set(-3, 2, -2); scene.add(rim)
-  const fill = new THREE.DirectionalLight('#43E5FF', 1); fill.position.set(1, 1, -3); scene.add(fill)
+  const rim = new THREE.DirectionalLight('#b4d0df', options.perception ? 1.6 : 3.1); rim.position.set(-3, 2, -2); scene.add(rim)
+  const fill = new THREE.DirectionalLight('#43E5FF', options.perception ? .65 : 1); fill.position.set(1, 1, -3); scene.add(fill)
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: '#070B14', roughness: .7, metalness: .2 }))
   floor.rotation.x = -Math.PI / 2; floor.position.y = -.09; floor.receiveShadow = true; scene.add(floor)
@@ -85,6 +92,7 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     const mark = new THREE.Mesh(lineGeometry, lineMaterial); mark.position.set(Math.cos(angle) * 1.64, .001, Math.sin(angle) * 1.64); mark.rotation.y = -angle; markings.add(mark)
   }
   scene.add(markings)
+  if (options.perception) { platform.visible = false; markings.visible = false; scene.children.filter(object => object instanceof THREE.Mesh && object.geometry instanceof THREE.TorusGeometry).forEach(object => { object.visible = false }) }
   const quadruped = createRobot('quadruped')
   options.onProgress?.(65, '四足机械模型已构建')
   const humanoid = createRobot('humanoid')
@@ -92,6 +100,8 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
   const models = { quadruped, humanoid }
   scene.add(models.quadruped.root, models.humanoid.root)
   const labs = options.lab ? { quadruped: createRobotLab('quadruped', quadruped.root), humanoid: createRobotLab('humanoid', humanoid.root) } : undefined
+  const perception = options.perception ? createPerceptionScene(host) : undefined
+  if (perception) scene.add(perception.root)
   if (labs) { scene.add(labs.quadruped.visuals, labs.humanoid.visuals); options.onParts?.({ quadruped: labs.quadruped.catalog, humanoid: labs.humanoid.catalog }) }
   const pickables: THREE.Mesh[] = []
   Object.values(models).forEach(model => model.root.traverse(node => { if (node instanceof THREE.Mesh) pickables.push(node) }))
@@ -117,6 +127,7 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
   let focused: RobotId | undefined, hoveredPart: string | undefined, focusedPart: string | undefined
   let lastFit = -1, cameraTransitionUntil = 0
   let labView: CameraView = 'perspective'
+  let perceptionRobot: RobotId | undefined
   const fitTarget = new THREE.Vector3(), fitCamera = new THREE.Vector3()
   const viewDirections: Record<CameraView, THREE.Vector3> = { perspective: new THREE.Vector3(1, .55, 1.4).normalize(), front: new THREE.Vector3(1, .04, .001).normalize(), side: new THREE.Vector3(.001, .04, 1).normalize(), top: new THREE.Vector3(.001, 1, .001).normalize() }
 
@@ -130,6 +141,7 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     camera.updateProjectionMatrix()
     if (options.lab && automaticView) lastFit = -1
     if (options.overview && automaticView) view('perspective', false)
+    if (options.perception && automaticView) view(labView, false)
   }
   const observer = new ResizeObserver(resize)
   observer.observe(host)
@@ -141,6 +153,25 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     killCameraTween()
     automaticView = true; parallax = 0; appliedParallax = 0; focused = undefined; focusedPart = undefined; hoveredPart = undefined; lastFit = -1; options.onSelect?.(); options.onPartSelect?.()
     options.onHover?.()
+    if (perception) {
+      const box = perception.bounds(), center = box.getCenter(new THREE.Vector3())
+      const direction = (preset === 'perspective' ? new THREE.Vector3(.75, .85, 1.1) : viewDirections[preset]).clone().normalize()
+      const orientation = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(center.clone().add(direction), center, new THREE.Vector3(0, 1, 0)))
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(orientation), up = new THREE.Vector3(0, 1, 0).applyQuaternion(orientation)
+      const vertical = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), horizontal = vertical * camera.aspect
+      let distance = 10
+      for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+        const corner = new THREE.Vector3(x, y, z).sub(center), depth = corner.dot(direction)
+        distance = Math.max(distance, depth + Math.abs(corner.dot(right)) / horizontal, depth + Math.abs(corner.dot(up)) / vertical)
+      }
+      const destination = center.clone().addScaledVector(direction, Math.min(controls.maxDistance, distance * 1.08))
+      const duration = animate && !matchMedia('(prefers-reduced-motion: reduce)').matches ? .65 : 0
+      cameraTransitionUntil = performance.now() + duration * 1000
+      gsap.to(camera.position, { x: destination.x, y: destination.y, z: destination.z, duration, overwrite: true })
+      gsap.to(controls.target, { x: center.x, y: center.y, z: center.z, duration, overwrite: true })
+      if (!duration) controls.update()
+      return
+    }
     const human = read().robot === 'humanoid'
     const fullscreen = !!document.fullscreenElement
     const compact = host.clientWidth <= 1100 && !fullscreen
@@ -163,16 +194,20 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     offset.setLength(THREE.MathUtils.clamp(offset.length() * factor, controls.minDistance, controls.maxDistance))
     camera.position.copy(controls.target).add(offset); controls.update()
   }
-  function pick(event: MouseEvent | PointerEvent): { id: RobotId; part?: RobotPart } | undefined {
+  function pick(event: MouseEvent | PointerEvent): { id?: RobotId; part?: RobotPart; objectId?: string; point?: Vector3Tuple } | undefined {
     const rect = renderer.domElement.getBoundingClientRect()
     pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1)
     raycaster.setFromCamera(pointer, camera)
     // r187 Raycaster 不检查 visible；透视外壳也需主动排除，内部模块才可拾取。
     const transparent = read().lab?.transparent
-    const hit = raycaster.intersectObjects(pickables.filter(mesh => isObjectVisible(mesh) && !(transparent && findRobotPart(mesh)?.kind === 'shell')), false)[0]
+    const hit = raycaster.intersectObjects([...pickables.filter(mesh => isObjectVisible(mesh) && !(transparent && findRobotPart(mesh)?.kind === 'shell')), ...(perception?.pickables.filter(isObjectVisible) ?? [])], false)[0]
     let object: THREE.Object3D | null = hit?.object ?? null
     const part = object ? findRobotPart(object) : undefined
-    while (object) { if (object.userData.robotId) return { id: object.userData.robotId as RobotId, part }; object = object.parent }
+    while (object) {
+      if (object.userData.robotId) return { id: object.userData.robotId as RobotId, part }
+      if (object.userData.environmentId) return { objectId: String(object.userData.environmentId), point: hit!.point.toArray() as Vector3Tuple }
+      object = object.parent
+    }
   }
   function framingDistance(radius: number, minimum: number, padding = 1.35) {
     const vertical = THREE.MathUtils.degToRad(camera.fov / 2)
@@ -198,24 +233,37 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     options.onSelect?.(id)
     if (labs) options.onPartSelect?.(labs[id].catalog.find(part => part.id === partId))
   }
+  function focusObject(id: string) {
+    if (!perception) return
+    killCameraTween(); automaticView = false; focused = undefined; focusedPart = undefined
+    const sphere = perception.bounds(id).getBoundingSphere(new THREE.Sphere()), distance = framingDistance(sphere.radius, 1.8, 1.2)
+    const destination = sphere.center.clone().addScaledVector(new THREE.Vector3(1, .75, 1.2).normalize(), distance)
+    const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : .65
+    gsap.to(camera.position, { x: destination.x, y: destination.y, z: destination.z, duration, overwrite: true }); gsap.to(controls.target, { x: sphere.center.x, y: sphere.center.y, z: sphere.center.z, duration, overwrite: true })
+  }
   function pointerDown(event: PointerEvent) { automaticView = false; pointerPressed = event.button === 0; pointerStart.set(event.clientX, event.clientY) }
   function pointerUp(event: PointerEvent) {
     if (pointerPressed && pointerStart.distanceTo(new THREE.Vector2(event.clientX, event.clientY)) < 5) {
       const hit = pick(event)
       options.onHover?.(hit?.id, hit?.part)
       hoveredPart = hit?.part?.id
-      if (hit) focus(hit.id, options.lab ? hit.part?.id : undefined); else if (options.overview && focused) view(); else { focused = undefined; focusedPart = undefined; options.onSelect?.(); options.onPartSelect?.() }
+      if (hit?.id) focus(hit.id, options.lab ? hit.part?.id : undefined)
+      else if (hit?.objectId && hit.objectId !== 'ground') options.onObjectSelect?.(hit.objectId)
+      else if (hit?.objectId === 'ground' && read().perception?.mode === 'path') options.onGoal?.(hit.point!)
+      else if (options.overview && focused) view()
+      else { focused = undefined; focusedPart = undefined; options.onSelect?.(); options.onPartSelect?.(); options.onObjectSelect?.(null) }
     }
     pointerPressed = false
   }
   function pointerMove(event: PointerEvent) {
     const hit = pick(event)
     hoveredPart = hit?.part?.id
+    options.onObjectHover?.(hit?.objectId)
     renderer.domElement.style.cursor = hit ? 'pointer' : 'grab'; options.onHover?.(hit?.id, hit?.part)
     if (!event.buttons) parallax = pointer.x * .045
   }
-  function pointerLeave() { pointerPressed = false; parallax = 0; hoveredPart = undefined; options.onHover?.() }
-  function doubleClick(event: MouseEvent) { const hit = pick(event); if (hit) { focus(hit.id, options.lab ? hit.part?.id : undefined); if (options.overview) options.onOpen?.(hit.id) } }
+  function pointerLeave() { pointerPressed = false; parallax = 0; hoveredPart = undefined; options.onHover?.(); options.onObjectHover?.() }
+  function doubleClick(event: MouseEvent) { const hit = pick(event); if (hit?.id) { focus(hit.id, options.lab ? hit.part?.id : undefined); if (options.overview) options.onOpen?.(hit.id) }; if (hit?.objectId && hit.objectId !== 'ground') focusObject(hit.objectId) }
   const pointerEvents = { pointerdown: pointerDown, pointerup: pointerUp, pointermove: pointerMove, pointerleave: pointerLeave, pointercancel: pointerLeave, dblclick: doubleClick }
   for (const [name, handler] of Object.entries(pointerEvents)) renderer.domElement.addEventListener(name, handler as EventListener)
   function contextLost(event: Event) { event.preventDefault(); cancelAnimationFrame(frame); onError('三维渲染上下文已中断，请重新加载场景。') }
@@ -234,7 +282,15 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     models.humanoid.root.visible = !!options.overview || state.robot === 'humanoid'
     for (const id of Object.keys(models) as RobotId[]) {
       if (labs) labs[id].visuals.visible = models[id].root.visible
-      if (models[id].root.visible) { models[id].update(state.robots[id], dt, state.paused || state.robots[id].emergency); if (state.lab && labs) labs[id].update(state.lab, hoveredPart) }
+      if (models[id].root.visible) {
+        models[id].update(state.robots[id], dt, state.paused || state.robots[id].emergency)
+        if (state.perception) {
+          if (perceptionRobot !== id) models[id].root.position.fromArray(state.perception.position)
+          else models[id].root.position.lerp(new THREE.Vector3(...state.perception.position), state.paused || state.robots[id].emergency ? 1 : 1 - Math.exp(-dt * 14))
+          perceptionRobot = id
+        }
+        if (state.lab && labs) labs[id].update(state.lab, hoveredPart)
+      }
     }
     if (labs && state.lab && automaticView && now >= cameraTransitionUntil) {
       if (Math.abs(state.lab.progress - lastFit) > .1 || lastFit === -1) {
@@ -255,7 +311,12 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
         controls.target.add(delta); camera.position.add(delta)
       }
     }
+    if (perception && focused && now >= cameraTransitionUntil) {
+      const center = new THREE.Box3().setFromObject(models[focused].root).getCenter(new THREE.Vector3()), delta = center.sub(controls.target)
+      controls.target.add(delta); camera.position.add(delta)
+    }
     controls.update()
+    if (perception && state.perception) perception.update(state.perception, camera, host.clientWidth, host.clientHeight, now)
     // 轻微相机视差仅用于首页默认视角，不改变机器人关节或用户操作后的视角。
     if (options.overview && automaticView && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       const offset = THREE.MathUtils.lerp(appliedParallax, parallax, Math.min(1, dt * 3))
@@ -271,16 +332,17 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     }
   }
   frame = requestAnimationFrame(render)
-  function fit() { killCameraTween(); automaticView = true; focused = undefined; focusedPart = undefined; lastFit = -1; labView = 'perspective'; cameraTransitionUntil = 0; options.onSelect?.(); options.onPartSelect?.() }
-  return { view, zoom, fit, focusPart: (id: string) => focus(read().robot, id), clearSelection: () => { focusedPart = undefined; focused = undefined }, dispose() {
+  function fit() { killCameraTween(); automaticView = true; focused = undefined; focusedPart = undefined; lastFit = -1; labView = 'perspective'; cameraTransitionUntil = 0; options.onSelect?.(); options.onPartSelect?.(); if (perception) view('perspective') }
+  return { view, zoom, fit, focusObject, focusRobot: () => focus(read().robot), focusPart: (id: string) => focus(read().robot, id), clearSelection: () => { focusedPart = undefined; focused = undefined }, dispose() {
     disposed = true; cancelAnimationFrame(frame); observer.disconnect(); killCameraTween()
     controls.removeEventListener('start', controlStart); controls.dispose()
     for (const [name, handler] of Object.entries(pointerEvents)) renderer.domElement.removeEventListener(name, handler as EventListener)
     renderer.domElement.removeEventListener('webglcontextlost', contextLost)
     if (labs) Object.values(labs).forEach(lab => lab.dispose())
+    perception?.dispose()
     const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>()
     scene.traverse(object => {
-      if (object instanceof THREE.Mesh || object instanceof THREE.Line) {
+      if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Points) {
         geometries.add(object.geometry)
         ;(Array.isArray(object.material) ? object.material : [object.material]).forEach(material => materials.add(material))
       }
