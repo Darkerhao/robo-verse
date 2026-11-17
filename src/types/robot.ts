@@ -1,4 +1,5 @@
 import type { PerceptionCommand, PerceptionState } from '@/config/perception'
+import type { AssistantState, RobotInstruction } from './assistant'
 
 export type RobotId = 'quadruped' | 'humanoid'
 export type RobotAction = 'idle' | 'stand' | 'walk' | 'backward' | 'trot' | 'run' | 'turnLeft' | 'turnRight' | 'sit' | 'jump' | 'crouch' | 'climb' | 'balance' | 'shake' | 'wave' | 'raiseArms' | 'bend' | 'pickUp' | 'carry' | 'handshake' | 'point' | 'grip' | 'openHand'
@@ -76,9 +77,13 @@ export interface SimulationSnapshot {
   paused: boolean
   robots: Record<RobotId, RobotState>
   perception: PerceptionState
+  assistant: AssistantState
 }
 
 export type RobotCommand =
+  | { type: 'assistant'; text: string; provider: string; robot: RobotId; commands: RobotInstruction[] }
+  | { type: 'cancelAssistant' }
+  | { type: 'clearAssistant' }
   | { type: 'perception'; command: PerceptionCommand }
   | { type: 'action'; robot: RobotId; action: RobotAction }
   | { type: 'speed'; robot: RobotId; value: number }

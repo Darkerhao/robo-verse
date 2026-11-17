@@ -13,6 +13,7 @@ const navigation = [
   { path: '/humanoid', label: 'HUMANOID', title: '人形机器人' },
   { path: '/lab', label: 'LAB', title: '全息实验室 · 部件、顺序拆解、透视与骨骼' },
   { path: '/perception', label: 'AI PERCEPTION', title: 'AI 感知中心 · 雷达、点云、目标识别与避障导航' },
+  { path: '/assistant', label: 'AI CONTROL', title: 'AI 智能控制 · 自然语言、顺序执行与指令记录' },
   { label: 'MISSIONS', title: '尚未实现 · 阶段七：智能任务中心' },
   { label: 'PERFORMANCE', title: '尚未实现 · 阶段八：完整性能对比；基础遥测可从工具栏访问' },
 ]
@@ -41,7 +42,7 @@ onUnmounted(() => sim.stop())
     <main class="page-content"><RouterView /></main>
     <footer class="global-footer"><span><i class="dot" :class="{ live: sim.connected }" />{{ sim.connected ? '本地仿真运行中' : '仿真引擎离线' }}<b>SIMULATION</b></span><span>运动学演示 · 原创机械模型 · 无真实设备连接</span><span class="mono">{{ sim.uptime }} / WebGL</span></footer>
     <AppDialog :open="modal !== null" :title="modal === 'help' ? '探索 NEXT ROBOTICS' : '画质与场景设置'" @close="modal = null">
-      <div v-if="modal === 'help'" class="help-content"><p>在展示大厅中观察两种机器人，点击模型聚焦，双击进入对应数字孪生页面。</p><div class="help-row"><AppIcon name="target" /><span><strong>三维观察</strong><small>左键拖动旋转视角 · 滚轮缩放 · 右键平移 · 工作台悬停识别部件 · 全屏</small></span></div><div class="help-row"><AppIcon name="play" /><span><strong>机器人控制</strong><small>工作台提供动作、关节与末端 IK 控制，支持循环、倍率与记录回放。暂停冻结动作和遥测；急停锁定单台机器人。</small></span></div><div class="help-row"><AppIcon name="cube" /><span><strong>全息实验室</strong><small>点击部件查看详情与聚焦；十步拆解支持进度、暂停、继续与恢复。外壳透明可拾取内部，骨骼与关节轴随真实节点运动。</small></span></div><div class="help-row"><AppIcon name="radar" /><span><strong>AI 感知中心</strong><small>切换五种视图观察雷达、点云与目标识别；路径视图点击空闲地面选终点，开始移动后机器人沿避障路线行走。支持扫描历史、局部放大、暂停和急停。</small></span></div><p>参数和感知结果均为 SIMULATION，不代表真实设备性能或视觉模型推理。自然语言控制与场景任务按后续阶段增量开发。</p></div>
+      <div v-if="modal === 'help'" class="help-content"><p>在展示大厅中观察两种机器人，点击模型聚焦，双击进入对应数字孪生页面。</p><div class="help-row"><AppIcon name="target" /><span><strong>三维观察</strong><small>左键拖动旋转视角 · 滚轮缩放 · 右键平移 · 工作台悬停识别部件 · 全屏</small></span></div><div class="help-row"><AppIcon name="play" /><span><strong>机器人控制</strong><small>工作台提供动作、关节与末端 IK 控制，支持循环、倍率与记录回放。暂停冻结动作和遥测；急停锁定单台机器人。</small></span></div><div class="help-row"><AppIcon name="cube" /><span><strong>全息实验室</strong><small>点击部件查看详情与聚焦；十步拆解支持进度、暂停、继续与恢复。外壳透明可拾取内部，骨骼与关节轴随真实节点运动。</small></span></div><div class="help-row"><AppIcon name="radar" /><span><strong>AI 感知中心</strong><small>切换五种视图观察雷达、点云与目标识别；路径视图点击空闲地面选终点，开始移动后机器人沿避障路线行走。支持扫描历史、局部放大、暂停和急停。</small></span></div><div class="help-row"><AppIcon name="robot" /><span><strong>AI 智能控制</strong><small>在 AI CONTROL 中输入白名单中文动作，用“然后”连接顺序步骤；本地规则离线执行，安全代理仅接受用户配置并再次校验动作。未知指令会拒绝。</small></span></div><p>参数和感知结果均为 SIMULATION，不代表真实设备性能或视觉模型推理。抓取/搬运动作是现有运动学演示，对象任务属于阶段七。</p></div>
       <div v-else class="settings-content"><label class="field">渲染质量<select v-model="sim.quality" aria-label="渲染质量"><option value="high">HIGH · 高清阴影 / 最高 2× 像素比</option><option value="medium">MEDIUM · 标准阴影 / 最高 1.5× 像素比</option><option value="low">LOW · 关闭阴影 / 1× 像素比</option></select></label><label class="setting-check"><input v-model="sim.grid" type="checkbox" />显示空间参考网格</label><p>模型和参数由本地程序生成，不需要外部 AI API 或设备连接。</p></div>
     </AppDialog>
   </div>

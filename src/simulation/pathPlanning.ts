@@ -25,6 +25,23 @@ export function isSegmentFree(a: Vector3Tuple, b: Vector3Tuple, objects: Environ
   return freeSegment(a, b, collisionBoxes(objects, zones, clearance), clearance)
 }
 
+/** 方向移动只走当前朝向上的安全路段，在实体或场地边界前停止。 */
+export function limitTravel(start: Vector3Tuple, goal: Vector3Tuple, objects: EnvironmentObject[], zones: Bounds[], clearance: number): Vector3Tuple {
+  const boxes = collisionBoxes(objects, zones, clearance)
+  if (!freeSegment(start, start, boxes, clearance)) throw new Error('当前位置没有安全移动空间。')
+  let low = 0, high = 1
+  if (freeSegment(start, goal, boxes, clearance)) return [...goal]
+  for (let i = 0; i < 20; i++) {
+    const amount = (low + high) / 2
+    const point: Vector3Tuple = [start[0] + (goal[0] - start[0]) * amount, 0, start[2] + (goal[2] - start[2]) * amount]
+    if (freeSegment(start, point, boxes, clearance)) low = amount
+    else high = amount
+  }
+  const end: Vector3Tuple = [start[0] + (goal[0] - start[0]) * low, 0, start[2] + (goal[2] - start[2]) * low]
+  if (distance(start, end) < .01) throw new Error('此方向没有足够的安全移动空间。')
+  return end
+}
+
 /** 八邻域 A*，对角线同样检查碰撞；视线简化保留每段的真实安全间距。 */
 export function planPath(start: Vector3Tuple, goal: Vector3Tuple, objects: EnvironmentObject[], zones: Bounds[], clearance: number): Vector3Tuple[] {
   const boxes = collisionBoxes(objects, zones, clearance)

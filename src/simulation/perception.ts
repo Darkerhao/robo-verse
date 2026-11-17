@@ -169,7 +169,7 @@ export class PerceptionEngine {
     while (route.waypoint < route.path.length) {
       const target = route.path[route.waypoint]!, dx = target[0] - state.position[0], dz = target[2] - state.position[2], distance = Math.hypot(dx, dz)
       if (distance <= 1e-8) { route.waypoint++; continue }
-      robot.heading = ((Math.atan2(dz, dx) * 180 / Math.PI) + 360) % 360; robot.targetHeading = robot.heading
+      robot.heading = ((Math.atan2(dz, dx) * 180 / Math.PI) + (robot.action === 'backward' ? 180 : 0) + 360) % 360; robot.targetHeading = robot.heading
       if (remaining <= 0) break
       const step = Math.min(distance, remaining), next: Vector3Tuple = [state.position[0] + dx / distance * step, 0, state.position[2] + dz / distance * step]
       if (!isSegmentFree(state.position, next, this.objects, restrictedZones, robotClearance[state.robot])) { route.status = 'blocked'; route.message = '前方安全间距不足，移动已停止'; break }
