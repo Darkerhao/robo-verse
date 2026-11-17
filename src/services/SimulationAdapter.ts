@@ -5,6 +5,9 @@ import { PerceptionEngine } from '@/simulation/perception'
 import { destinations, environmentObjects, homePosition, restrictedZones, robotClearance } from '@/config/perception'
 import { limitTravel } from '@/simulation/pathPlanning'
 import { CommandEngine } from '@/simulation/CommandEngine'
+import { MissionEngine } from '@/simulation/MissionEngine'
+import { conformToTerrain } from '@/simulation/missionKinematics'
+import { missions } from '@/config/missions'
 import type { RobotInstruction } from '@/types/assistant'
 import type { RobotAction, RobotAdapter, RobotCommand, RobotId, RobotPose, RobotState, SimulationSnapshot } from '@/types/robot'
 
@@ -26,12 +29,13 @@ function initialRobot(id: RobotId): RobotState {
 
 export class SimulationAdapter implements RobotAdapter {
   readonly mode = 'simulation' as const
-  private state: Omit<SimulationSnapshot, 'perception' | 'assistant'> = { time: 0, paused: false, robots: { quadruped: initialRobot('quadruped'), humanoid: initialRobot('humanoid') } }
+  private state: Omit<SimulationSnapshot, 'perception' | 'assistant' | 'mission'> = { time: 0, paused: false, robots: { quadruped: initialRobot('quadruped'), humanoid: initialRobot('humanoid') } }
   private perception = new PerceptionEngine()
   private listeners = new Set<(snapshot: SimulationSnapshot) => void>()
   private timer?: ReturnType<typeof setInterval>
   private sessions: Record<RobotId, MotionSession> = { quadruped: session(), humanoid: session() }
   private commands = new CommandEngine({ start: command => this.startInstruction(command), complete: (command, elapsed) => this.instructionComplete(command, elapsed), halt: robot => this.haltAssistant(robot) })
+  private missions = new MissionEngine((robot, action) => this.beginAction(robot, action))
 
   async connect() {
     if (this.timer) return
@@ -39,7 +43,7 @@ export class SimulationAdapter implements RobotAdapter {
     this.publish()
   }
 
-  disconnect() { this.commands.cancel('仿真连接已关闭'); clearInterval(this.timer); this.timer = undefined; this.listeners.clear() }
+  disconnect() { this.commands.cancel('仿真连接已关闭'); this.missions.stop(this.state.robots[this.missions.definition.robot], '仿真连接已关闭'); clearInterval(this.timer); this.timer = undefined; this.listeners.clear() }
   subscribe(listener: (snapshot: SimulationSnapshot) => void) {
     this.listeners.add(listener)
     listener(this.snapshot())
@@ -47,7 +51,7 @@ export class SimulationAdapter implements RobotAdapter {
   }
 
   snapshot(): SimulationSnapshot {
-    return { ...this.state, assistant: structuredClone(this.commands.state), perception: this.perception.snapshot(), robots: Object.fromEntries(Object.values(this.state.robots).map(robot => {
+    return { ...this.state, mission: this.missions.snapshot(), assistant: structuredClone(this.commands.state), perception: this.perception.snapshot(), robots: Object.fromEntries(Object.values(this.state.robots).map(robot => {
       const clip = this.sessions[robot.id].clip
       const target = this.sessions[robot.id].target
       return [robot.id, { ...robot, ...copyPose(robot), worldPosition: [...robot.worldPosition], jointTargets: target ? [...target.joints] : null, ikTarget: robot.ikTarget ? { ...robot.ikTarget, position: [...robot.ikTarget.position] } : null, recordedFrames: clip.length, recordedDuration: clip.at(-1)?.time ?? 0 }]
@@ -55,10 +59,27 @@ export class SimulationAdapter implements RobotAdapter {
   }
 
   send(command: RobotCommand) {
-    if (command.type === 'assistant') {
+    if (command.type === 'mission') {
+      const instruction = command.command, current = this.state.robots[this.missions.definition.robot]
+      if (this.state.paused && ['start', 'resume', 'select', 'reset'].includes(instruction.type)) throw new Error('请先继续全局仿真。')
+      if (instruction.type === 'select') {
+        if (!missions[instruction.id]) throw new Error('未知任务。')
+        const robot = this.state.robots[missions[instruction.id].robot]
+        if (this.missions.state.active && current.emergency || robot.emergency) throw new Error('请先解除急停，再切换任务。')
+        if (this.missions.state.active) this.holdMission()
+        this.commands.cancel('任务中心已接管'); this.perception.send({ type: 'leave' }, this.state.robots)
+        this.missions.select(instruction.id, robot)
+      } else {
+        const wasActive = this.missions.state.active
+        this.missions.send(instruction, current)
+        if (wasActive && ['stop', 'leave'].includes(instruction.type)) this.holdMission()
+      }
+    } else if (command.type === 'assistant') {
       const stop = command.commands.length === 1 && command.commands[0]?.action === 'stop'
       if (!stop && (this.state.paused || this.state.robots[command.robot].emergency)) throw new Error('请先继续仿真并解除当前机器人急停。')
+      if (this.missions.ownsRobot) throw new Error('请先停止任务中心的任务，再执行 AI 指令。')
       this.commands.submit(command.text, command.provider, command.commands, command.robot)
+      if (this.missions.definition.robot === command.robot) this.missions.state.active = false
     } else if (command.type === 'cancelAssistant') this.commands.cancel('用户已取消当前任务')
     else if (command.type === 'clearAssistant') this.commands.clear()
     else {
@@ -71,11 +92,17 @@ export class SimulationAdapter implements RobotAdapter {
         if (activeRobot && !replacedMotion) this.haltAssistant(activeRobot)
         else if (activeRobot && command.type !== 'reset' && this.perception.state.robot === activeRobot && command.type !== 'perception') this.perception.state.scanning = false
       }
+      const preparingSpeed = command.type === 'speed' && this.missions.state.status === 'ready'
+      if (this.missions.state.active && command.type !== 'pause' && !preparingSpeed && (command.type === 'reset' || perceptionControl || ('robot' in command && command.robot === this.missions.definition.robot))) {
+        this.missions.stop(this.state.robots[this.missions.definition.robot], command.type === 'emergency' ? '急停已终止任务，请解除急停后重置。' : '手动控制已接管，任务已停止。')
+        if (!replacedMotion) this.holdMission()
+        if (command.type !== 'emergency' && command.type !== 'release') this.missions.state.active = false
+      }
     }
     this.publish()
   }
 
-  private apply(command: Exclude<RobotCommand, { type: 'assistant' | 'cancelAssistant' | 'clearAssistant' }>) {
+  private apply(command: Exclude<RobotCommand, { type: 'assistant' | 'cancelAssistant' | 'clearAssistant' | 'mission' }>) {
     let replacedMotion = false
     if (command.type === 'reset') {
       // 急停锁不能被重置会话间接解除。
@@ -104,10 +131,15 @@ export class SimulationAdapter implements RobotAdapter {
         replacedMotion = true
         if (this.perception.state.active && this.perception.state.robot === robot.id) { this.perception.stop('急停已停止路线'); this.perception.state.scanning = false }
       } else if (command.type === 'release') {
-        robot.emergency = false; robot.action = 'stand'; robot.speed = 0
-        Object.assign(robot, neutralPose(robot.id))
-        robot.phase = 0; robot.actionTime = 0; robot.controlMode = 'motion'; robot.ikTarget = null; robot.recording = false
-        robot.targetHeading = robot.heading; control.target = undefined; control.transition = undefined; control.turnToTarget = false
+        const holdingTask = robot.emergency && this.missions.state.active && this.missions.definition.robot === robot.id
+        robot.emergency = false
+        if (holdingTask) this.holdMission()
+        else {
+          robot.action = 'stand'; robot.speed = 0
+          Object.assign(robot, neutralPose(robot.id))
+          robot.phase = 0; robot.actionTime = 0; robot.controlMode = 'motion'; robot.ikTarget = null; robot.recording = false
+          robot.targetHeading = robot.heading; control.target = undefined; control.transition = undefined; control.turnToTarget = false
+        }
         robot.power = 24; robot.cpu = 12
         replacedMotion = true
       } else {
@@ -182,11 +214,15 @@ export class SimulationAdapter implements RobotAdapter {
     dt = Math.min(dt, .2)
     this.state.time += dt
     const sensingRobot = this.state.robots[this.perception.state.robot]
+    const missionRobot = this.state.robots[this.missions.definition.robot]
+    this.missions.beforeTick(dt, missionRobot)
     const navigating = this.perception.state.route.status === 'running'
     this.perception.navigate(dt, sensingRobot)
     if (navigating && this.perception.state.route.status !== 'running' && !sensingRobot.emergency) this.beginAction(sensingRobot, 'stand')
     Object.values(this.state.robots).forEach((robot, index) => {
       if (robot.emergency) return
+      const inMission = this.missions.state.active && robot.id === this.missions.definition.robot
+      if (inMission && ['paused', 'stopped', 'failed'].includes(this.missions.state.status)) return
       const control = this.sessions[robot.id], previous = copyPose(robot)
       const followingRoute = this.perception.state.active && this.perception.state.robot === robot.id && this.perception.state.route.status === 'running'
       const moving = robot.controlMode === 'motion' && isMoving(robot.action)
@@ -195,7 +231,7 @@ export class SimulationAdapter implements RobotAdapter {
       robot.speed += (target - robot.speed) * (1 - Math.exp(-dt * 5))
       if (robot.speed < .001) robot.speed = 0
       // 自动移动的连续步态按实际速度推进，工作台的播放设置保留到任务结束后。
-      const commanded = this.commands.active?.commands[0]?.robotType === robot.id
+      const commanded = this.commands.active?.commands[0]?.robotType === robot.id || inMission && this.missions.running
       const actionDt = dt * (followingRoute || commanded ? 1 : robot.motionRate)
       let desired: RobotPose
       if (robot.controlMode === 'motion') {
@@ -232,6 +268,8 @@ export class SimulationAdapter implements RobotAdapter {
       } else {
         desired = control.target!
       }
+      // 先让目标姿态落在真实地形，再与同一坐标空间的旧姿态过渡，避免台阶高度叠加。
+      if (inMission && this.missions.definition.scene === 'stairs') desired = conformToTerrain(robot, desired)
       if (control.transition) {
         control.transition.elapsed += actionDt
         const amount = smoothStep(control.transition.elapsed / control.transition.duration)
@@ -239,6 +277,7 @@ export class SimulationAdapter implements RobotAdapter {
         if (robot.controlMode === 'replay') robot.heading = normalizeHeading(control.transition.heading + headingDifference(robot.heading, control.transition.heading) * amount)
         if (amount >= 1) control.transition = undefined
       }
+      if (inMission) desired = this.missions.pose(robot, desired, dt)
       Object.assign(robot, desired)
       if (robot.recording) this.recordFrame(robot)
       const load = robot.speed / robots[robot.id].maxSpeed
@@ -250,6 +289,7 @@ export class SimulationAdapter implements RobotAdapter {
       robot.cpu = clamp(12 + load * 38 + jointVelocity * .6 + ripple, 0, 95)
       robot.battery = Math.max(0, robot.battery - robot.power * dt / 15000)
     })
+    this.missions.afterTick(dt, missionRobot)
     this.perception.tick(dt, this.state.time, sensingRobot)
     this.commands.tick(dt)
     this.publish()
@@ -259,6 +299,14 @@ export class SimulationAdapter implements RobotAdapter {
     const robot = this.state.robots[id]
     if (this.perception.state.robot === id) { this.perception.stop('AI 指令移动已停止'); this.perception.state.scanning = false }
     if (!robot.emergency) this.beginAction(robot, 'stand')
+  }
+
+  private holdMission() {
+    const robot = this.state.robots[this.missions.definition.robot]
+    if (robot.emergency) return
+    robot.controlMode = 'joint'; robot.speed = 0; robot.recording = false; robot.ikTarget = null
+    const control = this.sessions[robot.id]
+    control.target = copyPose(robot); control.transition = undefined; control.turnToTarget = false
   }
 
   private startInstruction(command: RobotInstruction) {

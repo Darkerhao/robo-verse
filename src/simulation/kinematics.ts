@@ -75,7 +75,7 @@ export function worldFoot(id: RobotId, pose: RobotPose, index: number): Vector3T
 }
 
 /** 在倾斜的机身坐标中解足端 X/Y，再由踝轴抵消俯仰，保留支撑相接触高度。 */
-function placeFoot(id: RobotId, pose: RobotPose, index: number, x: number, y: number) {
+export function placeFoot(id: RobotId, pose: RobotPose, index: number, x: number, y: number) {
   const rig = rigs[id], [hx, hz] = rig.hips[index]!
   const relativeX = x - pose.position[0]
   const relativeY = (y - pose.position[1] + Math.sin(pose.roll) * hz!) / Math.cos(pose.roll)

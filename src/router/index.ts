@@ -9,6 +9,7 @@ export const router = createRouter({
     { path: '/lab', name: 'lab', component: () => import('@/views/LabView.vue'), meta: { title: '全息实验室', section: 'LAB' } },
     { path: '/perception', name: 'perception', component: () => import('@/views/PerceptionView.vue'), meta: { title: 'AI 感知中心', section: 'AI PERCEPTION' } },
     { path: '/assistant', name: 'assistant', component: () => import('@/views/AssistantView.vue'), meta: { title: 'AI 智能控制', section: 'AI CONTROL' } },
+    { path: '/missions', name: 'missions', component: () => import('@/views/MissionsView.vue'), meta: { title: '智能任务中心', section: 'MISSIONS' } },
     { path: '/robots', name: 'robots', component: () => import('@/views/RobotsView.vue'), meta: { title: '机器人管理', section: '设备中心' } },
     { path: '/skills', name: 'skills', component: () => import('@/views/SkillsView.vue'), meta: { title: '动作技能库', section: '应用中心' } },
     { path: '/telemetry', name: 'telemetry', component: () => import('@/views/TelemetryView.vue'), meta: { title: '遥测数据', section: '数据中心' } },

@@ -6,16 +6,20 @@ import { createRobot } from './RobotModel'
 import { findRobotPart, isObjectVisible, type RobotPart } from './RobotParts'
 import { createRobotLab } from './RobotLab'
 import { createPerceptionScene } from './PerceptionScene'
+import { createMissionScene } from './MissionScene'
+import { missionScenes, missions } from '@/config/missions'
+import type { MissionState } from '@/types/mission'
 import type { LabPart, LabState } from '@/config/lab'
 import type { PerceptionState } from '@/config/perception'
 import type { CameraView, Quality, RobotId, RobotState, Vector3Tuple } from '@/types/robot'
 
-export interface SceneState { robot: RobotId; robots: Record<RobotId, RobotState>; paused: boolean; grid: boolean; quality: Quality; lab?: LabState; perception?: PerceptionState }
+export interface SceneState { robot: RobotId; robots: Record<RobotId, RobotState>; paused: boolean; grid: boolean; quality: Quality; lab?: LabState; perception?: PerceptionState; mission?: MissionState }
 export interface SceneStats { fps: number; calls: number; geometries: number; textures: number }
 export interface SceneOptions {
   overview?: boolean
   lab?: boolean
   perception?: boolean
+  mission?: boolean
   onProgress?: (progress: number, stage: string) => void
   onReady?: () => void
   onHover?: (id?: RobotId, part?: RobotPart) => void
@@ -30,27 +34,28 @@ export interface SceneOptions {
 }
 
 export function createScene(host: HTMLElement, read: () => SceneState, onStats: (stats: SceneStats) => void, onError: (message: string) => void, options: SceneOptions = {}) {
+  const field = options.perception || options.mission
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
   renderer.setClearColor('#070B14')
   options.onProgress?.(20, 'WebGL 渲染器已创建')
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFShadowMap
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = options.perception ? 1.05 : 1.35
+  renderer.toneMappingExposure = field ? 1.05 : 1.35
   renderer.domElement.setAttribute('aria-label', '可交互机器人三维场景：左键旋转、滚轮缩放、右键平移')
   renderer.domElement.setAttribute('role', 'img')
   host.appendChild(renderer.domElement)
   const scene = new THREE.Scene()
-  scene.fog = new THREE.FogExp2('#070B14', options.perception ? .017 : .06)
+  scene.fog = new THREE.FogExp2('#070B14', field ? .017 : .06)
   const camera = new THREE.PerspectiveCamera(36, 1, .1, 100)
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = .075
-  controls.minDistance = options.lab ? .45 : options.perception ? 1.2 : 1.9
-  controls.maxDistance = options.perception ? 36 : options.overview ? 14 : options.lab ? 12 : 8
+  controls.minDistance = options.lab ? .45 : field ? 1.2 : 1.9
+  controls.maxDistance = field ? 36 : options.overview ? 14 : options.lab ? 12 : 8
   controls.maxPolarAngle = Math.PI / 2 - .018
   controls.minPolarAngle = .02
-  controls.maxTargetRadius = options.perception ? 9 : options.lab ? 4 : 2
+  controls.maxTargetRadius = field ? 9 : options.lab ? 4 : 2
   controls.screenSpacePanning = true
   let environment: THREE.WebGLRenderTarget | undefined
   const pmrem = new THREE.PMREMGenerator(renderer)
@@ -58,21 +63,21 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
   try {
     environment = pmrem.fromScene(environmentScene, .03)
     scene.environment = environment.texture
-    scene.environmentIntensity = options.perception ? .25 : .65
+    scene.environmentIntensity = field ? .25 : .65
   } finally { pmrem.dispose(); environmentScene.dispose() }
   options.onProgress?.(40, '环境光与材质已准备')
 
-  const ambient = new THREE.HemisphereLight('#d6e8ed', '#353d33', options.perception ? 1.1 : 2)
+  const ambient = new THREE.HemisphereLight('#d6e8ed', '#353d33', field ? 1.1 : 2)
   scene.add(ambient)
-  const key = new THREE.DirectionalLight('#f4f8ed', options.perception ? 2.8 : 4.6)
+  const key = new THREE.DirectionalLight('#f4f8ed', field ? 2.8 : 4.6)
   key.position.set(2, 5, 3); key.castShadow = true
   key.shadow.mapSize.set(2048, 2048)
   Object.assign(key.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near: .1, far: 14 })
-  if (options.perception) Object.assign(key.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, far: 25 })
+  if (field) Object.assign(key.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, far: 25 })
   key.shadow.bias = -.0005; key.shadow.normalBias = .02
   scene.add(key)
-  const rim = new THREE.DirectionalLight('#b4d0df', options.perception ? 1.6 : 3.1); rim.position.set(-3, 2, -2); scene.add(rim)
-  const fill = new THREE.DirectionalLight('#43E5FF', options.perception ? .65 : 1); fill.position.set(1, 1, -3); scene.add(fill)
+  const rim = new THREE.DirectionalLight('#b4d0df', field ? 1.6 : 3.1); rim.position.set(-3, 2, -2); scene.add(rim)
+  const fill = new THREE.DirectionalLight('#43E5FF', field ? .65 : 1); fill.position.set(1, 1, -3); scene.add(fill)
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: '#070B14', roughness: .7, metalness: .2 }))
   floor.rotation.x = -Math.PI / 2; floor.position.y = -.09; floor.receiveShadow = true; scene.add(floor)
@@ -92,7 +97,7 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     const mark = new THREE.Mesh(lineGeometry, lineMaterial); mark.position.set(Math.cos(angle) * 1.64, .001, Math.sin(angle) * 1.64); mark.rotation.y = -angle; markings.add(mark)
   }
   scene.add(markings)
-  if (options.perception) { platform.visible = false; markings.visible = false; scene.children.filter(object => object instanceof THREE.Mesh && object.geometry instanceof THREE.TorusGeometry).forEach(object => { object.visible = false }) }
+  if (field) { platform.visible = false; markings.visible = false; scene.children.filter(object => object instanceof THREE.Mesh && object.geometry instanceof THREE.TorusGeometry).forEach(object => { object.visible = false }) }
   const quadruped = createRobot('quadruped')
   options.onProgress?.(65, '四足机械模型已构建')
   const humanoid = createRobot('humanoid')
@@ -102,6 +107,9 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
   const labs = options.lab ? { quadruped: createRobotLab('quadruped', quadruped.root), humanoid: createRobotLab('humanoid', humanoid.root) } : undefined
   const perception = options.perception ? createPerceptionScene(host) : undefined
   if (perception) scene.add(perception.root)
+  const mission = options.mission ? createMissionScene(host) : undefined
+  if (mission) scene.add(mission.root)
+  const environmentView = perception ?? mission
   if (labs) { scene.add(labs.quadruped.visuals, labs.humanoid.visuals); options.onParts?.({ quadruped: labs.quadruped.catalog, humanoid: labs.humanoid.catalog }) }
   const pickables: THREE.Mesh[] = []
   Object.values(models).forEach(model => model.root.traverse(node => { if (node instanceof THREE.Mesh) pickables.push(node) }))
@@ -141,7 +149,7 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     camera.updateProjectionMatrix()
     if (options.lab && automaticView) lastFit = -1
     if (options.overview && automaticView) view('perspective', false)
-    if (options.perception && automaticView) view(labView, false)
+    if (field && automaticView) view(labView, false)
   }
   const observer = new ResizeObserver(resize)
   observer.observe(host)
@@ -153,8 +161,8 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     killCameraTween()
     automaticView = true; parallax = 0; appliedParallax = 0; focused = undefined; focusedPart = undefined; hoveredPart = undefined; lastFit = -1; options.onSelect?.(); options.onPartSelect?.()
     options.onHover?.()
-    if (perception) {
-      const box = perception.bounds(), center = box.getCenter(new THREE.Vector3())
+    if (environmentView) {
+      const box = environmentView.bounds(), center = box.getCenter(new THREE.Vector3())
       const direction = (preset === 'perspective' ? new THREE.Vector3(.75, .85, 1.1) : viewDirections[preset]).clone().normalize()
       const orientation = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(center.clone().add(direction), center, new THREE.Vector3(0, 1, 0)))
       const right = new THREE.Vector3(1, 0, 0).applyQuaternion(orientation), up = new THREE.Vector3(0, 1, 0).applyQuaternion(orientation)
@@ -200,7 +208,7 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     raycaster.setFromCamera(pointer, camera)
     // r187 Raycaster 不检查 visible；透视外壳也需主动排除，内部模块才可拾取。
     const transparent = read().lab?.transparent
-    const hit = raycaster.intersectObjects([...pickables.filter(mesh => isObjectVisible(mesh) && !(transparent && findRobotPart(mesh)?.kind === 'shell')), ...(perception?.pickables.filter(isObjectVisible) ?? [])], false)[0]
+    const hit = raycaster.intersectObjects([...pickables.filter(mesh => isObjectVisible(mesh) && !(transparent && findRobotPart(mesh)?.kind === 'shell')), ...(environmentView?.pickables.filter(isObjectVisible) ?? [])], false)[0]
     let object: THREE.Object3D | null = hit?.object ?? null
     const part = object ? findRobotPart(object) : undefined
     while (object) {
@@ -234,9 +242,9 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     if (labs) options.onPartSelect?.(labs[id].catalog.find(part => part.id === partId))
   }
   function focusObject(id: string) {
-    if (!perception) return
+    if (!environmentView) return
     killCameraTween(); automaticView = false; focused = undefined; focusedPart = undefined
-    const sphere = perception.bounds(id).getBoundingSphere(new THREE.Sphere()), distance = framingDistance(sphere.radius, 1.8, 1.2)
+    const sphere = environmentView.bounds(id).getBoundingSphere(new THREE.Sphere()), distance = framingDistance(sphere.radius, 1.8, 1.2)
     const destination = sphere.center.clone().addScaledVector(new THREE.Vector3(1, .75, 1.2).normalize(), distance)
     const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : .65
     gsap.to(camera.position, { x: destination.x, y: destination.y, z: destination.z, duration, overwrite: true }); gsap.to(controls.target, { x: sphere.center.x, y: sphere.center.y, z: sphere.center.z, duration, overwrite: true })
@@ -248,7 +256,7 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
       options.onHover?.(hit?.id, hit?.part)
       hoveredPart = hit?.part?.id
       if (hit?.id) focus(hit.id, options.lab ? hit.part?.id : undefined)
-      else if (hit?.objectId && hit.objectId !== 'ground') options.onObjectSelect?.(hit.objectId)
+      else if (hit?.objectId && hit.objectId !== 'ground') { if (mission) focusObject(hit.objectId); else options.onObjectSelect?.(hit.objectId) }
       else if (hit?.objectId === 'ground' && read().perception?.mode === 'path') options.onGoal?.(hit.point!)
       else if (options.overview && focused) view()
       else { focused = undefined; focusedPart = undefined; options.onSelect?.(); options.onPartSelect?.(); options.onObjectSelect?.(null) }
@@ -276,17 +284,20 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     if (document.hidden) { sampleTime = now; frameCount = 0; return }
     options.onFrame?.(dt)
     const state = read()
+    if (state.mission) { const lighting = missionScenes[missions[state.mission.id].scene]; rim.color.set(lighting.light); fill.color.set(lighting.color) }
     if (quality !== state.quality) { quality = state.quality; renderer.setPixelRatio(Math.min(devicePixelRatio, quality === 'high' ? 2 : quality === 'medium' ? 1.5 : 1)); renderer.shadowMap.enabled = quality !== 'low'; key.shadow.mapSize.setScalar(quality === 'high' ? 2048 : 1024); key.shadow.map?.dispose(); key.shadow.map = null; resize() }
     grid.visible = state.grid
     models.quadruped.root.visible = !!options.overview || state.robot === 'quadruped'
     models.humanoid.root.visible = !!options.overview || state.robot === 'humanoid'
+    const missionFrozen = !!state.mission && ['paused', 'stopped', 'failed'].includes(state.mission.status)
     for (const id of Object.keys(models) as RobotId[]) {
       if (labs) labs[id].visuals.visible = models[id].root.visible
       if (models[id].root.visible) {
-        models[id].update(state.robots[id], dt, state.paused || state.robots[id].emergency)
-        if (state.perception) {
-          if (perceptionRobot !== id) models[id].root.position.fromArray(state.perception.position)
-          else models[id].root.position.lerp(new THREE.Vector3(...state.perception.position), state.paused || state.robots[id].emergency ? 1 : 1 - Math.exp(-dt * 14))
+        models[id].update(state.robots[id], dt, state.paused || state.robots[id].emergency || missionFrozen)
+        if (state.perception || state.mission) {
+          const position = state.robots[id].worldPosition
+          if (perceptionRobot !== id) models[id].root.position.fromArray(position)
+          else models[id].root.position.lerp(new THREE.Vector3(...position), state.paused || state.robots[id].emergency || missionFrozen ? 1 : 1 - Math.exp(-dt * 14))
           perceptionRobot = id
         }
         if (state.lab && labs) labs[id].update(state.lab, hoveredPart)
@@ -311,12 +322,13 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
         controls.target.add(delta); camera.position.add(delta)
       }
     }
-    if (perception && focused && now >= cameraTransitionUntil) {
+    if (environmentView && focused && now >= cameraTransitionUntil) {
       const center = new THREE.Box3().setFromObject(models[focused].root).getCenter(new THREE.Vector3()), delta = center.sub(controls.target)
       controls.target.add(delta); camera.position.add(delta)
     }
     controls.update()
     if (perception && state.perception) perception.update(state.perception, camera, host.clientWidth, host.clientHeight, now)
+    if (mission && state.mission) mission.update(state.mission, models[state.robot].root, camera, host.clientWidth, host.clientHeight)
     // 轻微相机视差仅用于首页默认视角，不改变机器人关节或用户操作后的视角。
     if (options.overview && automaticView && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       const offset = THREE.MathUtils.lerp(appliedParallax, parallax, Math.min(1, dt * 3))
@@ -332,14 +344,14 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     }
   }
   frame = requestAnimationFrame(render)
-  function fit() { killCameraTween(); automaticView = true; focused = undefined; focusedPart = undefined; lastFit = -1; labView = 'perspective'; cameraTransitionUntil = 0; options.onSelect?.(); options.onPartSelect?.(); if (perception) view('perspective') }
+  function fit() { killCameraTween(); automaticView = true; focused = undefined; focusedPart = undefined; lastFit = -1; labView = 'perspective'; cameraTransitionUntil = 0; options.onSelect?.(); options.onPartSelect?.(); if (environmentView) view('perspective') }
   return { view, zoom, fit, focusObject, focusRobot: () => focus(read().robot), focusPart: (id: string) => focus(read().robot, id), clearSelection: () => { focusedPart = undefined; focused = undefined }, dispose() {
     disposed = true; cancelAnimationFrame(frame); observer.disconnect(); killCameraTween()
     controls.removeEventListener('start', controlStart); controls.dispose()
     for (const [name, handler] of Object.entries(pointerEvents)) renderer.domElement.removeEventListener(name, handler as EventListener)
     renderer.domElement.removeEventListener('webglcontextlost', contextLost)
     if (labs) Object.values(labs).forEach(lab => lab.dispose())
-    perception?.dispose()
+    perception?.dispose(); mission?.dispose()
     const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>()
     scene.traverse(object => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Points) {

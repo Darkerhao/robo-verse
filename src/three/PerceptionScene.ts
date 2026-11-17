@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { createEnvironmentModel } from './EnvironmentModel'
 import { categories, cloudCapacity, environmentObjects, objectBounds, restrictedZones, robotClearance } from '@/config/perception'
 import type { PerceptionState } from '@/config/perception'
 type BoxFrame = THREE.Box3Helper & { material: THREE.LineBasicMaterial }
@@ -14,13 +15,8 @@ export function createPerceptionScene(host: HTMLElement) {
   leaders.classList.add('perception-leaders'); leaders.setAttribute('aria-hidden', 'true'); host.appendChild(leaders)
   const palette = Object.fromEntries(Object.entries(categories).map(([key, value]) => [key, new THREE.Color(value.color)])) as Record<keyof typeof categories, THREE.Color>
   for (const object of objects) {
-    const group = new THREE.Group(); group.name = object.id; group.userData.environmentId = object.id; environment.add(group); entities.set(object.id, group)
-    const material = new THREE.MeshStandardMaterial({ color: object.category === 'ground' ? '#142333' : palette[object.category].clone().multiplyScalar(.58), roughness: .55, metalness: object.category === 'person' ? .05 : .3 })
-    for (const part of object.parts) {
-      const geometry = part.sphere ? new THREE.SphereGeometry(part.size[0] / 2, 24, 16) : new THREE.BoxGeometry(...part.size)
-      const mesh = new THREE.Mesh(geometry, material); mesh.position.fromArray(part.center); mesh.castShadow = object.category !== 'ground'; mesh.receiveShadow = true
-      group.add(mesh); pickables.push(mesh)
-    }
+    const { group, pickables: meshes } = createEnvironmentModel(object)
+    environment.add(group); entities.set(object.id, group); pickables.push(...meshes)
     const bounds = objectBounds(object), box = new THREE.Box3(new THREE.Vector3(...bounds.min), new THREE.Vector3(...bounds.max))
     const outline = new THREE.Box3Helper(box.clone(), palette[object.category]) as BoxFrame; outline.material.transparent = true; outline.material.opacity = .38; contours.add(outline); outlines.set(object.id, outline)
     const frame = new THREE.Box3Helper(box.clone().expandByScalar(.025), palette[object.category]) as BoxFrame; frame.material.depthTest = false; recognition.add(frame); frames.set(object.id, frame)

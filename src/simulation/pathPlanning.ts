@@ -1,6 +1,7 @@
 import { Box3, Ray, Vector3 } from 'three'
 import { objectBounds, trainingBounds, type Bounds, type EnvironmentObject } from '@/config/perception'
-import type { Vector3Tuple } from '@/types/robot'
+import type { RobotState, Vector3Tuple } from '@/types/robot'
+import type { PlannedRoute } from '@/config/perception'
 
 const cellSize = .25
 const distance = (a: Vector3Tuple, b: Vector3Tuple) => Math.hypot(a[0] - b[0], a[2] - b[2])
@@ -52,8 +53,18 @@ export function planPath(start: Vector3Tuple, goal: Vector3Tuple, objects: Envir
   const height = Math.round((trainingBounds.max[2] - trainingBounds.min[2]) / cellSize) + 1
   const point = (index: number): Vector3Tuple => [trainingBounds.min[0] + (index % width) * cellSize, 0, trainingBounds.min[2] + Math.floor(index / width) * cellSize]
   const index = (value: Vector3Tuple) => Math.round((value[2] - trainingBounds.min[2]) / cellSize) * width + Math.round((value[0] - trainingBounds.min[0]) / cellSize)
-  const first = index(start), last = index(goal)
-  if (!free(start, point(first)) || !free(point(last), goal)) return []
+  // 精确终点可能贴近安全包络，四舍五入后的网格点却落进障碍物；连接最近可达邻点。
+  const connect = (value: Vector3Tuple) => {
+    const nearest = index(value), x = nearest % width, z = Math.floor(nearest / width), candidates: number[] = []
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      if (x + dx < 0 || x + dx >= width || z + dz < 0 || z + dz >= height) continue
+      const candidate = (z + dz) * width + x + dx
+      if (free(value, point(candidate))) candidates.push(candidate)
+    }
+    return candidates.sort((a, b) => distance(value, point(a)) - distance(value, point(b)))[0]
+  }
+  const first = connect(start), last = connect(goal)
+  if (first === undefined || last === undefined) return []
   const scores = new Float64Array(width * height).fill(Infinity), priorities = new Float64Array(width * height).fill(Infinity)
   const parents = new Int32Array(width * height).fill(-1), closed = new Set<number>(), open = new Set([first])
   scores[first] = 0; priorities[first] = distance(start, goal)
@@ -89,3 +100,22 @@ export function planPath(start: Vector3Tuple, goal: Vector3Tuple, objects: Envir
 }
 
 export const pathLength = (path: Vector3Tuple[]) => path.slice(1).reduce((sum, point, i) => sum + distance(path[i]!, point), 0)
+
+/** 感知导航和任务导航共用执行器，只修改适配器持有的机器人世界坐标。 */
+export function advanceRoute(dt: number, robot: RobotState, route: PlannedRoute, objects: EnvironmentObject[], zones: Bounds[], clearance: number) {
+  if (robot.emergency || route.status !== 'running') return
+  const position = robot.worldPosition
+  let remaining = robot.speed * dt
+  while (route.waypoint < route.path.length) {
+    const target = route.path[route.waypoint]!, dx = target[0] - position[0], dz = target[2] - position[2], length = Math.hypot(dx, dz)
+    if (length <= 1e-8) { route.waypoint++; continue }
+    robot.heading = ((Math.atan2(dz, dx) * 180 / Math.PI) + (robot.action === 'backward' ? 180 : 0) + 360) % 360
+    robot.targetHeading = robot.heading
+    if (remaining <= 0) break
+    const step = Math.min(length, remaining), next: Vector3Tuple = [position[0] + dx / length * step, 0, position[2] + dz / length * step]
+    if (!isSegmentFree(position, next, objects, zones, clearance)) { route.status = 'blocked'; route.message = '前方安全间距不足，移动已停止'; return }
+    position.splice(0, 3, ...next); route.travelled += step; remaining -= step
+    if (step >= length - 1e-8) { position.splice(0, 3, ...target); route.waypoint++ } else break
+  }
+  if (route.waypoint >= route.path.length) { route.status = 'arrived'; route.message = '已抵达终点' }
+}

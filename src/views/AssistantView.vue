@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useSimulationStore } from '@/stores/simulation'
 import { useAssistantStore } from '@/stores/assistant'
 import { actions } from '@/config/robots'
@@ -17,7 +17,7 @@ watch(() => sim.selectedId, robot => {
   sim.send({ type: 'perception', command: { type: 'settings', values: { mode: 'normal', scanning: false } } })
   ai.feedback = ''; input.value = ''
 }, { immediate: true, flush: 'sync' })
-onUnmounted(() => { ai.cancel(); sim.send({ type: 'perception', command: { type: 'leave' } }) })
+onBeforeUnmount(() => { ai.cancel(); sim.send({ type: 'perception', command: { type: 'leave' } }) })
 async function submit() { const text = input.value.trim(); if (!text) return; await ai.request(text); if (!ai.rejectedText) input.value = '' }
 </script>
 
@@ -43,7 +43,7 @@ async function submit() { const text = input.value.trim(); if (!text) return; aw
         <div class="command-composer"><div class="quick-commands"><button v-for="text in quickCommands" :key="text" :disabled="!!ai.busy" @click="input = text">{{ text }}</button></div><form @submit.prevent="submit"><label class="sr-only" for="robot-instruction">自然语言机器人指令</label><textarea id="robot-instruction" v-model="input" rows="2" maxlength="240" placeholder="输入机器人指令…" :disabled="!!ai.busy" @keydown.enter.exact.prevent="!$event.isComposing && submit()" /><div class="composer-actions"><span>{{ ai.busy === 'parsing' ? '指令识别中…' : ai.active ? `当前任务 · ${ai.active.step + 1}/${ai.active.commands.length}` : '等待你的指令 · 本地白名单' }}</span><button type="button" class="btn btn-ghost" :disabled="!ai.active && !ai.busy" @click="ai.cancel()">取消任务</button><button class="btn btn-primary" :disabled="!input.trim() || !!ai.busy">发送</button></div></form><button class="clear-history" :disabled="!!ai.active || !!ai.busy || !ai.history.length" @click="sim.send({ type: 'clearAssistant' })">清空会话历史</button></div>
       </aside>
     </div>
-    <p class="assistant-note">SIMULATION · 前进/后退按朝向移动，时长决定最大距离，遇实体或场地安全边界提前停止；巡检为避障单程扫描演示。抓取、搬运与指向执行既有机械动作，对象交互与完整任务将在第七阶段实现。历史最多保留 30 条，刷新清空。</p>
+    <p class="assistant-note">SIMULATION · 前进/后退按朝向移动，时长决定最大距离，遇实体或场地安全边界提前停止；巡检为避障单程扫描演示。抓取、搬运与指向执行既有机械动作，对象交互与完整任务请进入 MISSIONS 任务中心。历史最多保留 30 条，刷新清空。</p>
   </div>
 </template>
 

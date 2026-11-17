@@ -4,7 +4,7 @@ import { cloudCapacity, destinations, environmentObjects, homePosition, objectBo
 import type { Detection, EnvironmentObject, LidarPoint, PerceptionCommand, PerceptionState, PlannedRoute } from '@/config/perception'
 import type { RobotId, RobotState, Vector3Tuple } from '@/types/robot'
 import { clamp } from './kinematics'
-import { isSegmentFree, pathLength, planPath } from './pathPlanning'
+import { advanceRoute, isSegmentFree, pathLength, planPath } from './pathPlanning'
 
 const tau = Math.PI * 2
 const xyz = (vector: Vector3) => vector.toArray() as Vector3Tuple
@@ -163,21 +163,9 @@ export class PerceptionEngine {
     }
   }
   navigate(dt: number, robot: RobotState) {
-    const state = this.state, route = state.route
-    if (!state.active || robot.emergency || route.status !== 'running') return
-    let remaining = robot.speed * dt
-    while (route.waypoint < route.path.length) {
-      const target = route.path[route.waypoint]!, dx = target[0] - state.position[0], dz = target[2] - state.position[2], distance = Math.hypot(dx, dz)
-      if (distance <= 1e-8) { route.waypoint++; continue }
-      robot.heading = ((Math.atan2(dz, dx) * 180 / Math.PI) + (robot.action === 'backward' ? 180 : 0) + 360) % 360; robot.targetHeading = robot.heading
-      if (remaining <= 0) break
-      const step = Math.min(distance, remaining), next: Vector3Tuple = [state.position[0] + dx / distance * step, 0, state.position[2] + dz / distance * step]
-      if (!isSegmentFree(state.position, next, this.objects, restrictedZones, robotClearance[state.robot])) { route.status = 'blocked'; route.message = '前方安全间距不足，移动已停止'; break }
-      state.position.splice(0, 3, ...next); route.travelled += step; remaining -= step
-      if (step >= distance - 1e-8) { state.position.splice(0, 3, ...target); route.waypoint++ } else break
-    }
-    if (route.waypoint >= route.path.length) { route.status = 'arrived'; route.message = '已抵达终点' }
+    if (this.state.active) advanceRoute(dt, robot, this.state.route, this.objects, restrictedZones, robotClearance[robot.id])
   }
+
   tick(dt: number, time: number, robot: RobotState) {
     const state = this.state
     if (!state.active || (robot.emergency && dt > 0)) return

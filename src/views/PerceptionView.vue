@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useSimulationStore } from '@/stores/simulation'
 import { perceptionModes } from '@/config/perception'
 import RobotViewport from '@/components/RobotViewport.vue'
@@ -8,7 +8,7 @@ import AppIcon from '@/components/AppIcon.vue'
 const sim = useSimulationStore(), p = computed(() => sim.snapshot.perception)
 const viewport = ref<InstanceType<typeof RobotViewport>>()
 watch(() => sim.selectedId, robot => { sim.send({ type: 'perception', command: { type: 'enter', robot } }) }, { immediate: true, flush: 'sync' })
-onUnmounted(() => sim.send({ type: 'perception', command: { type: 'leave' } }))
+onBeforeUnmount(() => sim.send({ type: 'perception', command: { type: 'leave' } }))
 const pointCount = computed(() => (p.value.history.find(frame => frame.id === p.value.historyId)?.points ?? p.value.points).length)
 </script>
 

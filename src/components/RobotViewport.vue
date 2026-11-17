@@ -7,9 +7,10 @@ import { useSimulationStore } from '@/stores/simulation'
 import { useLabStore } from '@/stores/lab'
 import type { CameraView, RobotId } from '@/types/robot'
 import { categories, environmentObjects } from '@/config/perception'
+import { missions, missionScenes } from '@/config/missions'
 import AppIcon from './AppIcon.vue'
 const sim = useSimulationStore()
-const props = defineProps<{ overview?: boolean; lab?: boolean; perception?: boolean }>()
+const props = defineProps<{ overview?: boolean; lab?: boolean; perception?: boolean; mission?: boolean }>()
 const vision = computed(() => props.perception && sim.snapshot.perception.mode === 'vision')
 const lab = useLabStore()
 const emit = defineEmits<{ select: [id?: RobotId] }>()
@@ -35,10 +36,11 @@ async function init() {
   await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
   if (!mounted || !host.value) return
   try {
-    scene = createScene(host.value, () => ({ robot: sim.selectedId, robots: sim.snapshot.robots, paused: sim.snapshot.paused, grid: sim.grid, quality: sim.quality, lab: props.lab ? lab.state : undefined, perception: props.perception ? sim.snapshot.perception : undefined }), value => { stats.value = value }, message => { error.value = message; loading.value = false }, {
+    scene = createScene(host.value, () => ({ robot: sim.selectedId, robots: sim.snapshot.robots, paused: sim.snapshot.paused, grid: sim.grid, quality: sim.quality, lab: props.lab ? lab.state : undefined, perception: props.perception ? sim.snapshot.perception : undefined, mission: props.mission ? sim.snapshot.mission : undefined }), value => { stats.value = value }, message => { error.value = message; loading.value = false }, {
       overview: props.overview,
       lab: props.lab,
       perception: props.perception,
+      mission: props.mission,
       onProgress: (value, stage) => { progress.value = value; loadStage.value = stage },
       onReady: () => { loading.value = false; if (selectedPart) lab.state.selectedPartId = selectedPart },
       onHover: (id, part) => { hovered.value = id; hoveredPart.value = part },
@@ -71,25 +73,27 @@ onUnmounted(() => { mounted = false; scene?.dispose() })
 </script>
 
 <template>
-  <section ref="panel" class="viewport panel" :class="{ 'hall-viewport': overview, 'perception-viewport': perception }" :data-robot="overview ? 'both' : sim.selectedId" :data-render-stats="JSON.stringify(stats)" :data-load-progress="progress">
+  <section ref="panel" class="viewport panel" :class="{ 'hall-viewport': overview, 'perception-viewport': perception || mission }" :data-robot="overview ? 'both' : sim.selectedId" :data-render-stats="JSON.stringify(stats)" :data-load-progress="progress">
     <div ref="host" class="canvas-host" />
-    <div class="scene-top"><div class="scene-label"><span class="dot" /> {{ props.perception ? 'PERCEPTION FIELD' : props.lab ? 'HOLOGRAPHIC LAB' : 'LIVE SCENE' }} <span class="scene-slash">/</span><span>{{ props.perception ? '感知训练场' : props.lab ? '机械结构探索' : '实验室环境' }}</span></div><div class="scene-tags"><span class="scene-tag">PBR</span><span class="scene-tag">{{ sim.quality.toUpperCase() }}</span><button class="scene-icon" title="切换全屏" aria-label="切换全屏" @click="fullscreen"><AppIcon name="expand" /></button></div></div>
+    <div class="scene-top"><div class="scene-label"><span class="dot" /> {{ props.mission ? 'MISSION FIELD' : props.perception ? 'PERCEPTION FIELD' : props.lab ? 'HOLOGRAPHIC LAB' : 'LIVE SCENE' }} <span class="scene-slash">/</span><span>{{ props.mission ? missionScenes[missions[sim.snapshot.mission.id].scene].name : props.perception ? '感知训练场' : props.lab ? '机械结构探索' : '实验室环境' }}</span></div><div class="scene-tags"><span class="scene-tag">PBR</span><span class="scene-tag">{{ sim.quality.toUpperCase() }}</span><button class="scene-icon" title="切换全屏" aria-label="切换全屏" @click="fullscreen"><AppIcon name="expand" /></button></div></div>
     <div v-if="!overview && !vision" class="model-label"><span class="eyebrow">{{ sim.definition.category }} · DIGITAL TWIN</span><h2>{{ sim.definition.name }}<span>{{ sim.selectedId === 'quadruped' ? 'QUADRUPED' : 'HUMANOID' }}</span></h2><span class="model-id mono">{{ sim.definition.serial }}</span></div>
     <div v-if="overview && (hovered || selected)" class="pick-label">{{ (hovered || selected) === 'quadruped' ? '四足机器人 / QUADRUPED' : '人形机器人 / HUMANOID' }}<small>点击聚焦 · 双击进入数字孪生</small></div>
     <div v-if="!overview && !vision && hoveredPart" class="part-label" :data-part-id="hoveredPart.id"><span>{{ hoveredPart.name }}</span><small class="mono" :title="hoveredPart.id">{{ hoveredPart.id }}</small></div>
     <div v-if="perception && !vision && hoveredObject && hoveredObject !== 'ground'" class="part-label"><span>{{ environmentObjects().find(object => object.id === hoveredObject)?.name }}</span><small>点击选择与局部放大</small></div>
     <div v-if="perception" class="perception-scene-status"><span class="badge">SIMULATION</span><span>{{ sim.snapshot.perception.historyId !== null ? '扫描历史回看' : sim.snapshot.perception.scanning ? '360° 扫描中' : '扫描已暂停' }} · {{ sim.snapshot.perception.range }} m</span><span class="mono">X {{ sim.snapshot.perception.position[0].toFixed(2) }} / Z {{ sim.snapshot.perception.position[2].toFixed(2) }} m</span></div>
     <div v-if="perception && ['lidar', 'cloud'].includes(sim.snapshot.perception.mode)" class="cloud-legend"><template v-if="sim.snapshot.perception.pointColor === 'class'"><span v-for="(category, key) in categories" :key="key"><i :style="{ background: category.color }" />{{ category.name }}</span></template><template v-else><span>近</span><i class="distance-gradient" /><span>远</span></template></div>
+    <div v-if="mission" class="perception-scene-status"><span class="badge">SIMULATION</span><span>{{ sim.snapshot.mission.message }}</span></div>
     <div v-if="props.lab" class="lab-scene-status"><span class="badge">SIMULATION</span><span>{{ lab.state.progress === 0 ? '完整装配' : lab.state.progress === 10 ? '拆解完成' : `结构拆解 ${(lab.state.progress * 10).toFixed(0)}%` }}</span><span v-if="lab.state.transparent">外壳透明 · 可拾取内部</span><span v-if="lab.state.skeleton">实时骨骼</span><span v-if="lab.state.axes">X / Y / Z 关节轴</span></div>
     <div class="scene-toolbar"><button class="scene-icon" :class="{ active: sim.grid }" title="显示或隐藏网格" aria-label="切换网格" :aria-pressed="sim.grid" @click="sim.grid = !sim.grid"><AppIcon name="grid" /></button><span /><button class="scene-icon" title="放大" aria-label="放大模型" @click="scene?.zoom(.8)"><AppIcon name="plus" /></button><button class="scene-icon" title="缩小" aria-label="缩小模型" @click="scene?.zoom(1.25)"><AppIcon name="minus" /></button><span /><button class="scene-icon" title="恢复默认视角" aria-label="恢复默认视角" @click="changeView('perspective')"><AppIcon name="target" /></button></div>
     <div class="scene-bottom"><div class="axis-gizmo" aria-label="三维坐标轴"><i class="axis-y" /><i class="axis-x" /><i class="axis-z" /><span class="y">Y</span><span class="x">X</span><span class="z">Z</span><b /></div><div v-if="!overview" class="camera-switch" aria-label="相机视角"><button v-for="view in views" :key="view.id" :class="{ active: activeView === view.id }" :aria-pressed="activeView === view.id" @click="changeView(view.id)">{{ view.label }}</button></div><span v-else class="hall-interaction">点击机器人聚焦 · 双击进入</span><div class="scene-performance mono"><span class="dot" /> {{ stats.fps || '—' }} FPS</div></div>
-    <div class="scene-help"><span>左键旋转</span><i /> <span>滚轮缩放</span><i /> <span>{{ props.perception ? '路径视图点击地面选终点' : props.lab ? '点击选择部件' : '右键平移' }}</span><span class="gait-note">{{ props.perception ? '环境感知与几何避障' : props.lab ? '结构与关节运动学演示' : '原地步态仿真' }} · 1 单位 = 1 m</span></div>
+    <div class="scene-help"><span>左键旋转</span><i /> <span>滚轮缩放</span><i /> <span>{{ props.mission ? '点击对象聚焦' : props.perception ? '路径视图点击地面选终点' : props.lab ? '点击选择部件' : '右键平移' }}</span><span class="gait-note">{{ props.mission ? '任务运动学与对象交互' : props.perception ? '环境感知与几何避障' : props.lab ? '结构与关节运动学演示' : '原地步态仿真' }} · 1 单位 = 1 m</span></div>
     <div v-if="loading || error" class="scene-overlay" role="status"><div v-if="loading" class="loading-ring" /><AppIcon v-else name="cube" /><h3>{{ loading ? '正在构建数字孪生场景' : '场景暂不可用' }}</h3><p>{{ loading ? loadStage : error }}</p><template v-if="loading"><progress :value="progress" max="100" aria-label="模型与场景加载进度" /><span class="mono">{{ progress }}%</span></template><button v-if="error" class="btn btn-primary" @click="init"><AppIcon name="reset" />重新加载场景</button></div>
     <span v-if="sim.current.emergency" class="freeze-indicator emergency"><AppIcon name="stop" />急停已锁定</span><span v-else-if="sim.snapshot.paused" class="freeze-indicator"><AppIcon name="pause" />仿真已暂停</span>
   </section>
 </template>
 
 <style scoped lang="less">
+:deep(.mission-object-label) { position: absolute; padding: 5px 7px; background: #070b14e8; border-left: 2px solid var(--cyan); pointer-events: none; color: var(--text); font-size: 9px; max-width: 210px; }
 .viewport { height: 100%; min-height: 460px; position: relative; overflow: hidden; background: #1b2225; &:fullscreen { width: 100vw; height: 100vh; border-radius: 0; } }
 .perception-viewport { .model-label { top: 57px; .eyebrow,.model-id,h2 > span { display: none; } h2 { font-size: 16px; letter-spacing: 0; color: var(--muted); } }.part-label { top: 98px; font-size: 10px; }.scene-toolbar { top: 32%; } }
 .perception-scene-status { position: absolute; bottom: 106px; left: 24px; right: 55px; display: flex; flex-wrap: wrap; gap: 9px; align-items: center; pointer-events: none; font-size: 9px; color: var(--muted); .badge { font-size: 8px; } }
