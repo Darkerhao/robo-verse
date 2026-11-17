@@ -4,10 +4,12 @@ import { useRouter } from 'vue-router'
 import { createScene, type SceneStats } from '@/three/createScene'
 import type { RobotPart } from '@/three/RobotParts'
 import { useSimulationStore } from '@/stores/simulation'
+import { useLabStore } from '@/stores/lab'
 import type { CameraView, RobotId } from '@/types/robot'
 import AppIcon from './AppIcon.vue'
 const sim = useSimulationStore()
-const props = defineProps<{ overview?: boolean }>()
+const props = defineProps<{ overview?: boolean; lab?: boolean }>()
+const lab = useLabStore()
 const emit = defineEmits<{ select: [id?: RobotId] }>()
 const router = useRouter()
 const host = ref<HTMLDivElement>()
@@ -25,17 +27,22 @@ let scene: ReturnType<typeof createScene> | undefined
 let mounted = true
 const views: { id: CameraView; label: string }[] = [{ id: 'perspective', label: '透视' }, { id: 'front', label: '正视' }, { id: 'side', label: '侧视' }, { id: 'top', label: '顶视' }]
 async function init() {
+  const selectedPart = props.lab ? lab.state.selectedPartId : null
   scene?.dispose(); scene = undefined; error.value = ''; loading.value = true; progress.value = 0; hovered.value = undefined; hoveredPart.value = undefined; selected.value = undefined
   await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
   if (!mounted || !host.value) return
   try {
-    scene = createScene(host.value, () => ({ robot: sim.selectedId, robots: sim.snapshot.robots, paused: sim.snapshot.paused, grid: sim.grid, quality: sim.quality }), value => { stats.value = value }, message => { error.value = message; loading.value = false }, {
+    scene = createScene(host.value, () => ({ robot: sim.selectedId, robots: sim.snapshot.robots, paused: sim.snapshot.paused, grid: sim.grid, quality: sim.quality, lab: props.lab ? lab.state : undefined }), value => { stats.value = value }, message => { error.value = message; loading.value = false }, {
       overview: props.overview,
+      lab: props.lab,
       onProgress: (value, stage) => { progress.value = value; loadStage.value = stage },
-      onReady: () => { loading.value = false },
+      onReady: () => { loading.value = false; if (selectedPart) lab.state.selectedPartId = selectedPart },
       onHover: (id, part) => { hovered.value = id; hoveredPart.value = part },
       onSelect: id => { selected.value = id; if (id) activeView.value = 'perspective'; emit('select', id) },
       onOpen: id => { sim.select(id); void router.push(`/${id}`) },
+      onParts: parts => { lab.catalog = parts },
+      onPartSelect: part => { if (props.lab) lab.select(part?.id ?? null) },
+      onFrame: props.lab ? lab.advance : undefined,
     })
     activeView.value = 'perspective'
   }
@@ -44,6 +51,8 @@ async function init() {
 }
 function changeView(view: CameraView) { activeView.value = view; scene?.view(view) }
 watch(() => sim.selectedId, () => { if (!props.overview) changeView('perspective') })
+watch(() => lab.state.selectedPartId, id => { if (props.lab) { if (id) scene?.focusPart(id); else scene?.clearSelection() } })
+defineExpose({ fit: () => { activeView.value = 'perspective'; scene?.fit() }, focusPart: () => { if (lab.state.selectedPartId) scene?.focusPart(lab.state.selectedPartId) } })
 async function fullscreen() {
   try { if (document.fullscreenElement) await document.exitFullscreen(); else await panel.value?.requestFullscreen() }
   catch { sim.error = '浏览器未允许全屏，请检查浏览器的全屏权限。' }
@@ -55,13 +64,14 @@ onUnmounted(() => { mounted = false; scene?.dispose() })
 <template>
   <section ref="panel" class="viewport panel" :class="{ 'hall-viewport': overview }" :data-robot="overview ? 'both' : sim.selectedId" :data-render-stats="JSON.stringify(stats)" :data-load-progress="progress">
     <div ref="host" class="canvas-host" />
-    <div class="scene-top"><div class="scene-label"><span class="dot" /> LIVE SCENE <span class="scene-slash">/</span><span>实验室环境</span></div><div class="scene-tags"><span class="scene-tag">PBR</span><span class="scene-tag">{{ sim.quality.toUpperCase() }}</span><button class="scene-icon" title="切换全屏" aria-label="切换全屏" @click="fullscreen"><AppIcon name="expand" /></button></div></div>
+    <div class="scene-top"><div class="scene-label"><span class="dot" /> {{ props.lab ? 'HOLOGRAPHIC LAB' : 'LIVE SCENE' }} <span class="scene-slash">/</span><span>{{ props.lab ? '机械结构探索' : '实验室环境' }}</span></div><div class="scene-tags"><span class="scene-tag">PBR</span><span class="scene-tag">{{ sim.quality.toUpperCase() }}</span><button class="scene-icon" title="切换全屏" aria-label="切换全屏" @click="fullscreen"><AppIcon name="expand" /></button></div></div>
     <div v-if="!overview" class="model-label"><span class="eyebrow">{{ sim.definition.category }} · DIGITAL TWIN</span><h2>{{ sim.definition.name }}<span>{{ sim.selectedId === 'quadruped' ? 'QUADRUPED' : 'HUMANOID' }}</span></h2><span class="model-id mono">{{ sim.definition.serial }}</span></div>
     <div v-if="overview && (hovered || selected)" class="pick-label">{{ (hovered || selected) === 'quadruped' ? '四足机器人 / QUADRUPED' : '人形机器人 / HUMANOID' }}<small>点击聚焦 · 双击进入数字孪生</small></div>
     <div v-if="!overview && hoveredPart" class="part-label" :data-part-id="hoveredPart.id"><span>{{ hoveredPart.name }}</span><small class="mono" :title="hoveredPart.id">{{ hoveredPart.id }}</small></div>
+    <div v-if="props.lab" class="lab-scene-status"><span class="badge">SIMULATION</span><span>{{ lab.state.progress === 0 ? '完整装配' : lab.state.progress === 10 ? '拆解完成' : `结构拆解 ${(lab.state.progress * 10).toFixed(0)}%` }}</span><span v-if="lab.state.transparent">外壳透明 · 可拾取内部</span><span v-if="lab.state.skeleton">实时骨骼</span><span v-if="lab.state.axes">X / Y / Z 关节轴</span></div>
     <div class="scene-toolbar"><button class="scene-icon" :class="{ active: sim.grid }" title="显示或隐藏网格" aria-label="切换网格" :aria-pressed="sim.grid" @click="sim.grid = !sim.grid"><AppIcon name="grid" /></button><span /><button class="scene-icon" title="放大" aria-label="放大模型" @click="scene?.zoom(.8)"><AppIcon name="plus" /></button><button class="scene-icon" title="缩小" aria-label="缩小模型" @click="scene?.zoom(1.25)"><AppIcon name="minus" /></button><span /><button class="scene-icon" title="恢复默认视角" aria-label="恢复默认视角" @click="changeView('perspective')"><AppIcon name="target" /></button></div>
     <div class="scene-bottom"><div class="axis-gizmo" aria-label="三维坐标轴"><i class="axis-y" /><i class="axis-x" /><i class="axis-z" /><span class="y">Y</span><span class="x">X</span><span class="z">Z</span><b /></div><div v-if="!overview" class="camera-switch" aria-label="相机视角"><button v-for="view in views" :key="view.id" :class="{ active: activeView === view.id }" :aria-pressed="activeView === view.id" @click="changeView(view.id)">{{ view.label }}</button></div><span v-else class="hall-interaction">点击机器人聚焦 · 双击进入</span><div class="scene-performance mono"><span class="dot" /> {{ stats.fps || '—' }} FPS</div></div>
-    <div class="scene-help"><span>左键旋转</span><i /> <span>滚轮缩放</span><i /> <span>右键平移</span><span class="gait-note">原地步态仿真 · 1 单位 = 1 m</span></div>
+    <div class="scene-help"><span>左键旋转</span><i /> <span>滚轮缩放</span><i /> <span>{{ props.lab ? '点击选择部件' : '右键平移' }}</span><span class="gait-note">{{ props.lab ? '结构与关节运动学演示' : '原地步态仿真' }} · 1 单位 = 1 m</span></div>
     <div v-if="loading || error" class="scene-overlay" role="status"><div v-if="loading" class="loading-ring" /><AppIcon v-else name="cube" /><h3>{{ loading ? '正在构建数字孪生场景' : '场景暂不可用' }}</h3><p>{{ loading ? loadStage : error }}</p><template v-if="loading"><progress :value="progress" max="100" aria-label="模型与场景加载进度" /><span class="mono">{{ progress }}%</span></template><button v-if="error" class="btn btn-primary" @click="init"><AppIcon name="reset" />重新加载场景</button></div>
     <span v-if="sim.current.emergency" class="freeze-indicator emergency"><AppIcon name="stop" />急停已锁定</span><span v-else-if="sim.snapshot.paused" class="freeze-indicator"><AppIcon name="pause" />仿真已暂停</span>
   </section>
@@ -69,6 +79,7 @@ onUnmounted(() => { mounted = false; scene?.dispose() })
 
 <style scoped lang="less">
 .viewport { height: 100%; min-height: 460px; position: relative; overflow: hidden; background: #1b2225; &:fullscreen { width: 100vw; height: 100vh; border-radius: 0; } }
+.lab-scene-status { position: absolute; bottom: 115px; left: 24px; right: 55px; display: flex; flex-wrap: wrap; align-items: center; gap: 9px; color: var(--muted); font-size: 9px; pointer-events: none; .badge { font-size: 8px; } }
 .part-label { position: absolute; top: 156px; left: 26px; max-width: min(240px, 60%); padding: 8px 10px; border-left: 2px solid var(--cyan); background: #070b14df; pointer-events: none; color: var(--cyan); font-size: 11px; small { display: block; margin-top: 5px; font-size: 8px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
 .pick-label { position: absolute; right: 8%; top: 72px; color: var(--cyan); font-size: 11px; pointer-events: none; small { display: block; margin-top: 8px; color: var(--muted); font-size: 9px; } }.hall-interaction { color: var(--muted); font-size: 10px; }.hall-viewport { .scene-top { top: 22px; }.scene-toolbar { top: auto; bottom: 160px; right: 24px; }.scene-help { background: #070b14cc; }.pick-label { top: 80px; } }.scene-overlay progress { width: 180px; height: 4px; accent-color: var(--accent); }
 .canvas-host { position: absolute; inset: 0 0 30px; :deep(canvas) { display: block; width: 100%; height: 100%; touch-action: none; } }

@@ -7,19 +7,23 @@ import { actions } from '@/config/robots'
 import AppIcon from './AppIcon.vue'
 import JointControl from './JointControl.vue'
 const sim = useSimulationStore()
+const props = defineProps<{ joint?: string; compact?: boolean }>()
 const route = useRoute(), router = useRouter()
 function select(id: RobotId) { sim.select(id); if (route.meta.robot) void router.push(`/${id}`) }
 const locked = computed(() => sim.current.emergency || sim.snapshot.paused)
 const tab = ref<'motion' | 'joint' | 'ik'>('motion')
 watch(() => sim.selectedId, () => { tab.value = 'motion' })
+watch(() => props.joint, joint => { if (joint) tab.value = 'joint' }, { immediate: true })
 function speed(event: Event) { sim.send({ type: 'speed', robot: sim.selectedId, value: Number((event.target as HTMLInputElement).value) }) }
 </script>
 <template>
   <aside class="control-panel panel">
     <div class="control-title"><h2>机器人控制</h2><span class="badge" :class="{ warning: locked }"><span class="dot" />{{ sim.status }}</span></div>
+    <template v-if="!props.compact">
     <div class="robot-switch"><button :class="{ selected: sim.selectedId === 'quadruped' }" :aria-pressed="sim.selectedId === 'quadruped'" @click="select('quadruped')"><AppIcon name="dog" />机器狗</button><button :class="{ selected: sim.selectedId === 'humanoid' }" :aria-pressed="sim.selectedId === 'humanoid'" @click="select('humanoid')"><AppIcon name="person" />人形机器人</button></div>
     <div class="robot-info"><div><span class="device-symbol"><AppIcon :name="sim.selectedId === 'quadruped' ? 'dog' : 'person'" /></span><span><strong>{{ sim.definition.name }}</strong><small>{{ sim.definition.category }} · 概念机型</small></span></div><span class="sim-chip">SIM</span></div>
     <div class="robot-specs"><span>驱动轴 <b class="mono">{{ sim.definition.drivenAxes }} <small>AXES</small></b></span><span>设定质量 <b class="mono">{{ sim.definition.mass }} <small>kg</small></b></span></div>
+    </template>
     <div class="control-tabs" role="tablist" aria-label="运动控制方式"><button v-for="item in [{ id: 'motion', label: '动作' }, { id: 'joint', label: '关节' }, { id: 'ik', label: '末端 IK' }] as const" :key="item.id" role="tab" :aria-selected="tab === item.id" :aria-controls="`control-${item.id}`" :class="{ active: tab === item.id }" @click="tab = item.id">{{ item.label }}</button></div>
     <div class="control-body" :id="`control-${tab}`" role="tabpanel">
       <template v-if="tab === 'motion'">
@@ -28,7 +32,7 @@ function speed(event: Event) { sim.send({ type: 'speed', robot: sim.selectedId, 
         <div class="speed-control"><div class="section-label"><label for="speed-slider">步态速度</label><span class="speed-value mono">{{ sim.current.targetSpeed.toFixed(1) }} <small>m/s</small></span></div><input id="speed-slider" :value="sim.current.targetSpeed" type="range" min="0" :max="sim.definition.maxSpeed" step="0.1" :disabled="locked" @input="speed" @change="sim.log(`步态目标速度设为 ${sim.current.targetSpeed.toFixed(1)} m/s`)"><div class="range-labels mono"><span>0.0</span><span>{{ sim.definition.maxSpeed.toFixed(1) }} m/s</span></div></div>
         <div class="heading-reading"><span>机身朝向</span><output class="mono" data-heading>{{ sim.current.heading.toFixed(0) }}°</output><span>原地运动</span></div>
       </template>
-      <JointControl v-else :mode="tab" :locked="locked" />
+      <JointControl v-else :mode="tab" :locked="locked" :selected-joint-id="props.joint" />
       <div class="playback-controls"><div class="section-label"><label for="rate-slider">动作倍率</label><span class="mono rate-value">{{ sim.current.motionRate.toFixed(2) }}×</span></div><input id="rate-slider" :value="sim.current.motionRate" type="range" min="0.25" max="2" step="0.25" :disabled="locked" @input="sim.send({ type: 'rate', robot: sim.selectedId, value: Number(($event.target as HTMLInputElement).value) })"><div class="loop-row"><label><input type="checkbox" aria-label="循环播放动作" :checked="sim.current.loop" :disabled="locked" @change="sim.send({ type: 'loop', robot: sim.selectedId, value: ($event.target as HTMLInputElement).checked })">循环播放</label><button class="btn btn-ghost" :disabled="locked" @click="sim.send({ type: 'stop', robot: sim.selectedId }, '停止当前动作，平滑恢复站姿')"><AppIcon name="stop" />停止动作</button></div></div>
       <div class="record-controls"><div class="section-label">关节动作记录<span class="mono">{{ sim.current.recordedDuration.toFixed(1) }} / 20 s</span></div><div class="record-buttons"><button class="btn" :class="{ recording: sim.current.recording }" :disabled="locked || sim.current.controlMode === 'replay'" @click="sim.send({ type: 'record', robot: sim.selectedId, value: !sim.current.recording }, sim.current.recording ? '关节动作记录已结束' : '开始记录当前机器人关节动作')">{{ sim.current.recording ? '结束记录' : '开始记录' }}</button><button class="btn" :disabled="locked || sim.current.recording || sim.current.recordedFrames < 2" @click="sim.send({ type: 'replay', robot: sim.selectedId }, '回放当前机器人关节动作')">回放</button><button class="btn btn-ghost" :disabled="locked || sim.current.recording || sim.current.controlMode === 'replay' || !sim.current.recordedFrames" @click="sim.send({ type: 'clearRecording', robot: sim.selectedId }, '已清除当前机器人关节记录')">清除</button></div><p v-if="sim.current.controlMode === 'replay'" class="replay-progress mono" role="status">回放 {{ sim.current.replayTime.toFixed(1) }} / {{ sim.current.recordedDuration.toFixed(1) }} s</p><p v-else class="record-note">记录当前真实仿真关节，暂停时冻结；本次会话内保存。</p></div>
     </div>

@@ -4,7 +4,7 @@ import { joints, endEffectors } from '@/config/joints'
 import { forwardEndEffector } from '@/simulation/kinematics'
 import { useSimulationStore } from '@/stores/simulation'
 import type { Vector3Tuple } from '@/types/robot'
-const props = defineProps<{ mode: 'joint' | 'ik'; locked: boolean }>()
+const props = defineProps<{ mode: 'joint' | 'ik'; locked: boolean; selectedJointId?: string }>()
 const sim = useSimulationStore()
 const jointId = ref(''), effectorId = ref('')
 const target = ref<Vector3Tuple>([0, -.6, 0])
@@ -18,6 +18,7 @@ const actual = computed(() => effector.value ? forwardEndEffector(sim.selectedId
 const degrees = (value: number) => value * 180 / Math.PI
 const targetAngle = computed(() => degrees(sim.current.jointTargets?.[selectedIndex.value] ?? sim.current.joints[selectedIndex.value] ?? 0))
 watch(() => sim.selectedId, () => { jointId.value = catalog.value[0]!.id; effectorId.value = effectors.value.at(-1)!.id }, { immediate: true })
+watch(() => props.selectedJointId, id => { if (id && catalog.value.some(joint => joint.id === id)) jointId.value = id }, { immediate: true })
 function initializeTarget() {
   const saved = sim.current.ikTarget
   target.value = saved?.effector === effectorId.value ? [...saved.position] : effector.value?.kind === 'hand' ? [.32, -.4, effector.value.side * .12] : [.0, -.6, 0]

@@ -23,6 +23,12 @@ export function findRobotPart(object: THREE.Object3D): RobotPart | undefined {
   }
 }
 
+export function isObjectVisible(object: THREE.Object3D) {
+  let current: THREE.Object3D | null = object
+  while (current) { if (!current.visible) return false; current = current.parent }
+  return true
+}
+
 /** 两机型共用机械造型工具；每个模型内部复用几何/材质，由场景卸载统一释放。 */
 export function mechanicalParts() {
   const palette = {

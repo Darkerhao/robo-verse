@@ -1,0 +1,71 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createPinia, disposePinia, setActivePinia } from 'pinia'
+import { useLabStore } from './lab'
+import { useSimulationStore } from './simulation'
+
+describe('全息实验室控制闭环', () => {
+  let pinia: ReturnType<typeof createPinia>
+  beforeEach(() => { pinia = createPinia(); setActivePinia(pinia) })
+  afterEach(() => disposePinia(pinia))
+  it('按序推进、暂停/继续和任意进度反向恢复，不累计位移', () => {
+    const lab = useLabStore()
+    lab.start(); lab.advance(2)
+    expect(lab.state.progress).toBeCloseTo(1.8)
+    lab.togglePlayback(); lab.advance(3)
+    expect(lab.state.progress).toBeCloseTo(1.8)
+    lab.togglePlayback(); lab.advance(1)
+    expect(lab.state.progress).toBeCloseTo(2.7)
+    lab.seek(6.4); lab.advance(1)
+    expect(lab.state.progress).toBe(6.4)
+    lab.restore(); lab.advance(1)
+    expect(lab.state.progress).toBeCloseTo(5.5)
+    lab.advance(20)
+    expect(lab.state.progress).toBe(0)
+    expect(lab.playback).toBe('idle')
+    lab.start(); lab.advance(20)
+    expect(lab.state.progress).toBe(10)
+    expect(lab.playback).toBe('idle')
+  })
+  it('全局暂停和单机急停冻结拆解，恢复原状仍是同一状态流', async () => {
+    const lab = useLabStore(), sim = useSimulationStore()
+    await sim.start()
+    lab.start(); sim.send({ type: 'pause', value: true }); lab.advance(2)
+    expect(lab.state.progress).toBe(0)
+    sim.send({ type: 'pause', value: false }); lab.advance(2)
+    expect(lab.state.progress).toBeCloseTo(1.8)
+    sim.send({ type: 'emergency', robot: 'quadruped' }); lab.advance(2)
+    expect(lab.state.progress).toBeCloseTo(1.8)
+    sim.send({ type: 'release', robot: 'quadruped' }); lab.restore(); lab.advance(3)
+    expect(lab.state.progress).toBe(0)
+  })
+  it('恢复途中暂停后继续仍然反向装配', () => {
+    const lab = useLabStore()
+    lab.seek(5); lab.restore(); lab.advance(1); lab.togglePlayback(); lab.advance(2)
+    expect(lab.state.progress).toBeCloseTo(4.1)
+    lab.togglePlayback(); lab.advance(1)
+    expect(lab.state.progress).toBeCloseTo(3.2)
+    expect(lab.playback).toBe('restoring')
+  })
+  it('隐藏父模块时子模块不可见，显示子部件会恢复父级且保留无关隐藏', () => {
+    const lab = useLabStore()
+    lab.hide('humanoid/body/waist'); lab.hide('humanoid/body/left-leg')
+    expect(lab.visible('humanoid/body/waist/controller')).toBe(false)
+    lab.show('humanoid/body/waist/controller')
+    expect(lab.visible('humanoid/body/waist/controller')).toBe(true)
+    expect(lab.visible('humanoid/body/left-leg/hip')).toBe(false)
+    lab.restore()
+    expect(lab.state.hidden).toEqual([])
+  })
+  it('重置清除选择、显示开关、隐藏和播放，不改变机器人姿态', () => {
+    const lab = useLabStore(), sim = useSimulationStore()
+    const original = structuredClone(sim.current)
+    lab.state.transparent = true; lab.state.axes = true; lab.state.skeleton = true
+    lab.select('quadruped/body/roof'); lab.hide('quadruped/body/roof'); lab.seek(8); lab.start()
+    lab.reset()
+    expect(lab.state.progress).toBe(0)
+    expect(lab.state.selectedPartId).toBeNull()
+    expect(lab.state.hidden).toEqual([])
+    expect(lab.state.transparent || lab.state.axes || lab.state.skeleton).toBe(false)
+    expect(sim.current).toEqual(original)
+  })
+})
