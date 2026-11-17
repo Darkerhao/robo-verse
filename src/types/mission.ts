@@ -28,7 +28,7 @@ export interface MissionSceneDefinition {
 }
 export interface MissionEvent { id: number; time: number; level: 'info' | 'warning'; message: string }
 export interface MissionState {
-  active: boolean; id: MissionId; status: MissionStatus; step: number; stepElapsed: number; elapsed: number
+  active: boolean; runId: number; id: MissionId; status: MissionStatus; step: number; stepElapsed: number; elapsed: number
   progress: number; message: string; events: MissionEvent[]; result: string | null
   route: PlannedRoute; detections: Detection[]; scanOrigin: Vector3Tuple | null
   objects: MissionObject[]; marked: string[]; attached: boolean; payloadPosition: Vector3Tuple | null

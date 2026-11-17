@@ -36,4 +36,27 @@ describe('遥测会话生命周期', () => {
     expect(sim.connected).toBe(false)
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('双机曲线隔离，关节历史为快照，任务曲线在离开后保留且新会话断开', async () => {
+    const sim = useSimulationStore()
+    await sim.start()
+    sim.send({ type: 'action', robot: 'humanoid', action: 'wave' })
+    vi.advanceTimersByTime(2000)
+    const sample = [...sim.histories.humanoid.at(-1)!.joints]
+    expect(sim.histories.humanoid.at(-1)!.power).toBeGreaterThan(sim.histories.quadruped.at(-1)!.power)
+    vi.advanceTimersByTime(500)
+    expect(sim.histories.humanoid.at(-2)!.joints).toEqual(sample)
+    sim.send({ type: 'mission', command: { type: 'select', id: 'inspection' } })
+    sim.send({ type: 'mission', command: { type: 'start' } }); vi.advanceTimersByTime(2000)
+    const first = sim.histories.quadruped.at(-1)!
+    expect(first.taskProgress).toBeGreaterThan(0)
+    sim.send({ type: 'mission', command: { type: 'leave' } }); expect(sim.telemetry.task).toBeNull(); vi.advanceTimersByTime(600)
+    expect(sim.histories.quadruped.at(-1)!.taskProgress).toBeNull()
+    expect(sim.histories.quadruped.some(s => s.taskKey === first.taskKey)).toBe(true)
+    sim.send({ type: 'mission', command: { type: 'select', id: 'inspection' } }); vi.advanceTimersByTime(500)
+    expect(sim.histories.quadruped.at(-1)!.taskKey).not.toBe(first.taskKey)
+    sim.send({ type: 'reset' })
+    expect(sim.histories.humanoid).toHaveLength(0)
+    expect(sim.histories.quadruped).toHaveLength(0)
+  })
 })

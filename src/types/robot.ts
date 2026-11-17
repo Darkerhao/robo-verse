@@ -45,6 +45,14 @@ export interface RobotDefinition {
   mass: number
   maxSpeed: number
   actions: RobotAction[]
+  batteryWh: number
+  nominalVoltage: number
+  payloadKg: number
+  referencePower: number
+  structure: string
+  locomotion: string
+  sensors: string
+  applications: string
 }
 
 export interface RobotState extends RobotPose {
@@ -71,6 +79,27 @@ export interface RobotState extends RobotPose {
   power: number
   cpu: number
   emergency: boolean
+  jointVelocities: number[]
+  travelSpeed: number
+}
+
+export type SensorStatus = 'standby' | 'active' | 'paused' | 'stopped' | 'history'
+export interface RobotTelemetry {
+  mode: string
+  status: string
+  action: string
+  voltage: number
+  current: number
+  remainingMinutes: number | null
+  memory: number
+  latency: number
+  jointLoads: number[]
+  jointLoad: number
+  stability: number
+  direction: number
+  sensors: { camera: SensorStatus; lidar: SensorStatus; imu: SensorStatus; environment: SensorStatus }
+  targets: number
+  task: { key: string; name: string; status: string; progress: number } | null
 }
 
 export interface SimulationSnapshot {
@@ -80,6 +109,7 @@ export interface SimulationSnapshot {
   perception: PerceptionState
   assistant: AssistantState
   mission: MissionState
+  telemetry: Record<RobotId, RobotTelemetry>
 }
 
 export type RobotCommand =
@@ -113,5 +143,10 @@ export interface RobotAdapter {
   subscribe(listener: (snapshot: SimulationSnapshot) => void): () => void
 }
 
-export interface TelemetrySample { time: number; speed: number; temperature: number; power: number; cpu: number; battery: number }
+export interface TelemetrySample {
+  time: number; speed: number; temperature: number; power: number; cpu: number; battery: number
+  voltage: number; current: number; travelSpeed: number; memory: number; latency: number
+  joints: number[]; taskProgress: number | null; taskKey: string | null
+}
+export type TelemetryMetric = 'speed' | 'temperature' | 'power' | 'cpu' | 'battery' | 'joint' | 'taskProgress'
 export interface RuntimeEvent { id: number; time: string; level: 'info' | 'warning'; robot: string; message: string }

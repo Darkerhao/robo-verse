@@ -11,12 +11,13 @@ import { blendPoses, clamp, copyPose, neutralPose, smoothStep } from './kinemati
 const emptyRoute = (start: Vector3Tuple): PlannedRoute => ({ status: 'idle', start: [...start], goal: [...start], path: [], waypoint: 1, length: 0, travelled: 0, replans: 0, message: '等待任务开始' })
 function initialState(id: MissionId): MissionState {
   const definition = missions[id], objects = structuredClone(missionScenes[definition.scene].objects)
-  return { active: false, id, status: 'ready', step: 0, stepElapsed: 0, elapsed: 0, progress: 0, message: '准备就绪，开始后自动执行任务。', events: [], result: null, route: emptyRoute(definition.start), detections: [], scanOrigin: null, objects, marked: [], attached: false, payloadPosition: objects.find(object => object.id === 'payload')?.parts[0]?.center ?? null, payloadHeading: 0, revision: 0 }
+  return { active: false, runId: 0, id, status: 'ready', step: 0, stepElapsed: 0, elapsed: 0, progress: 0, message: '准备就绪，开始后自动执行任务。', events: [], result: null, route: emptyRoute(definition.start), detections: [], scanOrigin: null, objects, marked: [], attached: false, payloadPosition: objects.find(object => object.id === 'payload')?.parts[0]?.center ?? null, payloadHeading: 0, revision: 0 }
 }
 
 /** 只编排任务。动作、位姿、时间仍由 SimulationAdapter 持有；导航和识别复用既有算法。 */
 export class MissionEngine {
   state = initialState('inspection')
+  private sequence = 0
   private entered = false
   private approachStart: Vector3Tuple | null = null
   private manipulationStart: RobotPose | null = null
@@ -33,7 +34,7 @@ export class MissionEngine {
   select(id: MissionId, robot: RobotState) {
     if (!missions[id]) throw new Error('未知任务。')
     if (robot.emergency) throw new Error('请先解除急停，再切换或重置任务。')
-    this.state = initialState(id); this.state.active = true; this.entered = false
+    this.state = initialState(id); this.state.runId = ++this.sequence; this.state.active = true; this.entered = false
     robot.worldPosition = [...this.definition.start]; robot.heading = 0; robot.targetHeading = 0
     Object.assign(robot, neutralPose(robot.id)); this.action(robot, 'stand'); robot.recording = false
   }

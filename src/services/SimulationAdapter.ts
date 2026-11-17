@@ -8,6 +8,7 @@ import { CommandEngine } from '@/simulation/CommandEngine'
 import { MissionEngine } from '@/simulation/MissionEngine'
 import { conformToTerrain } from '@/simulation/missionKinematics'
 import { missions } from '@/config/missions'
+import { telemetryFor, updateEnergy } from '@/simulation/telemetry'
 import type { RobotInstruction } from '@/types/assistant'
 import type { RobotAction, RobotAdapter, RobotCommand, RobotId, RobotPose, RobotState, SimulationSnapshot } from '@/types/robot'
 
@@ -24,12 +25,12 @@ const normalizeHeading = (angle: number) => ((angle % 360) + 360) % 360
 const headingDifference = (target: number, current: number) => ((target - current + 540) % 360) - 180
 
 function initialRobot(id: RobotId): RobotState {
-  return { ...neutralPose(id), id, worldPosition: [...homePosition], action: 'stand', targetSpeed: id === 'quadruped' ? 1 : .8, speed: 0, heading: 0, targetHeading: 0, phase: 0, actionTime: 0, motionRate: 1, loop: true, controlMode: 'motion', jointTargets: null, ikTarget: null, recording: false, recordedFrames: 0, recordedDuration: 0, replayTime: 0, battery: id === 'quadruped' ? 98 : 94, temperature: 36, power: 24, cpu: 12, emergency: false }
+  return { ...neutralPose(id), id, worldPosition: [...homePosition], action: 'stand', targetSpeed: id === 'quadruped' ? 1 : .8, speed: 0, heading: 0, targetHeading: 0, phase: 0, actionTime: 0, motionRate: 1, loop: true, controlMode: 'motion', jointTargets: null, ikTarget: null, recording: false, recordedFrames: 0, recordedDuration: 0, replayTime: 0, battery: id === 'quadruped' ? 98 : 94, temperature: 36, power: 24, cpu: 12, emergency: false, jointVelocities: joints[id].map(() => 0), travelSpeed: 0 }
 }
 
 export class SimulationAdapter implements RobotAdapter {
   readonly mode = 'simulation' as const
-  private state: Omit<SimulationSnapshot, 'perception' | 'assistant' | 'mission'> = { time: 0, paused: false, robots: { quadruped: initialRobot('quadruped'), humanoid: initialRobot('humanoid') } }
+  private state: Omit<SimulationSnapshot, 'perception' | 'assistant' | 'mission' | 'telemetry'> = { time: 0, paused: false, robots: { quadruped: initialRobot('quadruped'), humanoid: initialRobot('humanoid') } }
   private perception = new PerceptionEngine()
   private listeners = new Set<(snapshot: SimulationSnapshot) => void>()
   private timer?: ReturnType<typeof setInterval>
@@ -51,10 +52,10 @@ export class SimulationAdapter implements RobotAdapter {
   }
 
   snapshot(): SimulationSnapshot {
-    return { ...this.state, mission: this.missions.snapshot(), assistant: structuredClone(this.commands.state), perception: this.perception.snapshot(), robots: Object.fromEntries(Object.values(this.state.robots).map(robot => {
+    return { ...this.state, telemetry: { quadruped: this.telemetry('quadruped'), humanoid: this.telemetry('humanoid') }, mission: this.missions.snapshot(), assistant: structuredClone(this.commands.state), perception: this.perception.snapshot(), robots: Object.fromEntries(Object.values(this.state.robots).map(robot => {
       const clip = this.sessions[robot.id].clip
       const target = this.sessions[robot.id].target
-      return [robot.id, { ...robot, ...copyPose(robot), worldPosition: [...robot.worldPosition], jointTargets: target ? [...target.joints] : null, ikTarget: robot.ikTarget ? { ...robot.ikTarget, position: [...robot.ikTarget.position] } : null, recordedFrames: clip.length, recordedDuration: clip.at(-1)?.time ?? 0 }]
+      return [robot.id, { ...robot, ...copyPose(robot), worldPosition: [...robot.worldPosition], jointVelocities: [...robot.jointVelocities], jointTargets: target ? [...target.joints] : null, ikTarget: robot.ikTarget ? { ...robot.ikTarget, position: [...robot.ikTarget.position] } : null, recordedFrames: clip.length, recordedDuration: clip.at(-1)?.time ?? 0 }]
     })) as Record<RobotId, RobotState> }
   }
 
@@ -99,6 +100,7 @@ export class SimulationAdapter implements RobotAdapter {
         if (command.type !== 'emergency' && command.type !== 'release') this.missions.state.active = false
       }
     }
+    if (!this.state.paused) this.refreshEnergy(0)
     this.publish()
   }
 
@@ -127,7 +129,7 @@ export class SimulationAdapter implements RobotAdapter {
       const robot = this.state.robots[command.robot]
       const control = this.sessions[robot.id]
       if (command.type === 'emergency') {
-        robot.emergency = true; robot.speed = 0; robot.power = 0; robot.recording = false
+        robot.emergency = true; robot.speed = 0; robot.power = 0; robot.cpu = 0; robot.travelSpeed = 0; robot.jointVelocities.fill(0); robot.recording = false
         replacedMotion = true
         if (this.perception.state.active && this.perception.state.robot === robot.id) { this.perception.stop('急停已停止路线'); this.perception.state.scanning = false }
       } else if (command.type === 'release') {
@@ -212,6 +214,8 @@ export class SimulationAdapter implements RobotAdapter {
   tick(dt: number) {
     if (this.state.paused || !Number.isFinite(dt) || dt <= 0) return
     dt = Math.min(dt, .2)
+    const previous = { quadruped: copyPose(this.state.robots.quadruped), humanoid: copyPose(this.state.robots.humanoid) }
+    const positions = { quadruped: [...this.state.robots.quadruped.worldPosition], humanoid: [...this.state.robots.humanoid.worldPosition] }
     this.state.time += dt
     const sensingRobot = this.state.robots[this.perception.state.robot]
     const missionRobot = this.state.robots[this.missions.definition.robot]
@@ -219,11 +223,11 @@ export class SimulationAdapter implements RobotAdapter {
     const navigating = this.perception.state.route.status === 'running'
     this.perception.navigate(dt, sensingRobot)
     if (navigating && this.perception.state.route.status !== 'running' && !sensingRobot.emergency) this.beginAction(sensingRobot, 'stand')
-    Object.values(this.state.robots).forEach((robot, index) => {
+    Object.values(this.state.robots).forEach(robot => {
       if (robot.emergency) return
       const inMission = this.missions.state.active && robot.id === this.missions.definition.robot
       if (inMission && ['paused', 'stopped', 'failed'].includes(this.missions.state.status)) return
-      const control = this.sessions[robot.id], previous = copyPose(robot)
+      const control = this.sessions[robot.id]
       const followingRoute = this.perception.state.active && this.perception.state.robot === robot.id && this.perception.state.route.status === 'running'
       const moving = robot.controlMode === 'motion' && isMoving(robot.action)
       const factor = isTurning(robot.action) || robot.action === 'climb' ? .35 : robot.action === 'carry' ? .5 : 1
@@ -280,19 +284,26 @@ export class SimulationAdapter implements RobotAdapter {
       if (inMission) desired = this.missions.pose(robot, desired, dt)
       Object.assign(robot, desired)
       if (robot.recording) this.recordFrame(robot)
-      const load = robot.speed / robots[robot.id].maxSpeed
-      const jointVelocity = robot.joints.reduce((sum, angle, axis) => sum + Math.abs(angle - previous.joints[axis]!), 0) / dt
-      const bodyVelocity = Math.abs(robot.position[1] - previous.position[1]) / dt
-      const ripple = Math.sin(this.state.time * 1.6 + index) * 1.5
-      robot.power = 24 + load * 240 + jointVelocity * 2 + bodyVelocity * 70 + ripple
-      robot.temperature += (36 + load * 21 + Math.min(8, jointVelocity) - robot.temperature) * dt * .08
-      robot.cpu = clamp(12 + load * 38 + jointVelocity * .6 + ripple, 0, 95)
-      robot.battery = Math.max(0, robot.battery - robot.power * dt / 15000)
     })
     this.missions.afterTick(dt, missionRobot)
     this.perception.tick(dt, this.state.time, sensingRobot)
     this.commands.tick(dt)
+    for (const robot of Object.values(this.state.robots)) {
+      robot.jointVelocities = robot.joints.map((angle, index) => Math.abs(angle - previous[robot.id].joints[index]!) / dt)
+      robot.travelSpeed = Math.hypot(...robot.worldPosition.map((value, index) => value - positions[robot.id][index]!)) / dt
+    }
+    this.refreshEnergy(dt)
     this.publish()
+  }
+
+  private telemetry(id: RobotId) { return telemetryFor(this.state.robots[id], this.state.paused, this.perception.state, this.missions.state, this.commands.state) }
+
+  private refreshEnergy(dt: number) {
+    for (const robot of Object.values(this.state.robots)) {
+      const held = this.missions.state.active && this.missions.definition.robot === robot.id && ['paused', 'stopped', 'failed'].includes(this.missions.state.status)
+      if (held || robot.emergency) { robot.jointVelocities.fill(0); robot.travelSpeed = 0 }
+      updateEnergy(robot, this.telemetry(robot.id), held ? 0 : dt)
+    }
   }
 
   private haltAssistant(id: RobotId) {
@@ -305,6 +316,9 @@ export class SimulationAdapter implements RobotAdapter {
     const robot = this.state.robots[this.missions.definition.robot]
     if (robot.emergency) return
     robot.controlMode = 'joint'; robot.speed = 0; robot.recording = false; robot.ikTarget = null
+    // 停止/退出可发生在全局暂停中，不能依赖下一个 tick 清除已经失效的运动读数。
+    robot.travelSpeed = 0; robot.jointVelocities.fill(0)
+    updateEnergy(robot, this.telemetry(robot.id), 0)
     const control = this.sessions[robot.id]
     control.target = copyPose(robot); control.transition = undefined; control.turnToTarget = false
   }
@@ -347,8 +361,10 @@ export class SimulationAdapter implements RobotAdapter {
     const control = this.sessions[robot.id]
     robot.action = action; robot.actionTime = 0; robot.controlMode = 'motion'; robot.ikTarget = null
     robot.targetHeading = robot.heading; control.turnToTarget = false; control.target = undefined
+    robot.travelSpeed = 0
     if (!isMoving(action)) robot.speed = 0
     this.transition(robot, motionPose(robot))
+    if (this.state.paused) { robot.jointVelocities.fill(0); updateEnergy(robot, this.telemetry(robot.id), 0) }
   }
 
   private controlPose(robot: RobotState, lift: boolean) {
@@ -359,7 +375,7 @@ export class SimulationAdapter implements RobotAdapter {
   }
 
   private setTarget(robot: RobotState, target: RobotPose) {
-    robot.speed = 0; robot.targetHeading = robot.heading
+    robot.speed = 0; robot.travelSpeed = 0; robot.targetHeading = robot.heading
     this.sessions[robot.id].target = target; this.sessions[robot.id].turnToTarget = false
     this.transition(robot, target)
   }

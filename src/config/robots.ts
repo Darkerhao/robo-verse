@@ -1,9 +1,10 @@
 import type { RobotDefinition, RobotId, RobotAction } from '@/types/robot'
 import { joints } from './joints'
 
+/** 原创概念机的演示设定，不是厂商规格或动力学测量。 */
 export const robots: Record<RobotId, RobotDefinition> = {
-  quadruped: { id: 'quadruped', name: 'RV K1', serial: 'RV-SIM-001', category: '四足机器人', description: '灵活、稳定，探索四足运动的可能性。', drivenAxes: joints.quadruped.length, mass: 28, maxSpeed: 2.5, actions: ['idle', 'stand', 'walk', 'backward', 'trot', 'run', 'turnLeft', 'turnRight', 'sit', 'jump', 'crouch', 'climb', 'balance', 'shake'] },
-  humanoid: { id: 'humanoid', name: 'RV H1', serial: 'RV-SIM-002', category: '人形机器人', description: '从双足步态到灵巧手，探索协调的机械运动。', drivenAxes: joints.humanoid.length, mass: 47, maxSpeed: 1.8, actions: ['idle', 'stand', 'walk', 'backward', 'run', 'turnLeft', 'turnRight', 'wave', 'raiseArms', 'crouch', 'bend', 'pickUp', 'carry', 'handshake', 'point', 'grip', 'openHand'] },
+  quadruped: { batteryWh: 420, nominalVoltage: 48, payloadKg: 5, referencePower: 140, structure: '四条独立三轴腿链 · 承载躯干', locomotion: '四拍行走 / 对角小跑 / 前后足组奔跑', sensors: '双目 / 深度 / 雷达 / IMU / 超声波', applications: '工厂巡检、安防巡逻、复杂地形、搜救', id: 'quadruped', name: 'RV K1', serial: 'RV-SIM-001', category: '四足机器人', description: '灵活、稳定，探索四足运动的可能性。', drivenAxes: joints.quadruped.length, mass: 28, maxSpeed: 2.5, actions: ['idle', 'stand', 'walk', 'backward', 'trot', 'run', 'turnLeft', 'turnRight', 'sit', 'jump', 'crouch', 'climb', 'balance', 'shake'] },
+  humanoid: { batteryWh: 600, nominalVoltage: 48, payloadKg: 3, referencePower: 240, structure: '双足 + 双臂 + 腰颈 + 独立五指', locomotion: '双足交替 / 躯干补偿 / 协调摆臂', sensors: '双目 / 深度 / 雷达 / IMU / 足底传感器', applications: '物品抓取、仓库搬运、人机交互', id: 'humanoid', name: 'RV H1', serial: 'RV-SIM-002', category: '人形机器人', description: '从双足步态到灵巧手，探索协调的机械运动。', drivenAxes: joints.humanoid.length, mass: 47, maxSpeed: 1.8, actions: ['idle', 'stand', 'walk', 'backward', 'run', 'turnLeft', 'turnRight', 'wave', 'raiseArms', 'crouch', 'bend', 'pickUp', 'carry', 'handshake', 'point', 'grip', 'openHand'] },
 }
 
 export const actions: Record<RobotAction, { label: string; english: string; icon: string; description: string; duration: number; animated: boolean }> = {

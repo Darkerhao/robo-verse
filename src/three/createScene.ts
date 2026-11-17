@@ -17,6 +17,7 @@ export interface SceneState { robot: RobotId; robots: Record<RobotId, RobotState
 export interface SceneStats { fps: number; calls: number; geometries: number; textures: number }
 export interface SceneOptions {
   overview?: boolean
+  comparison?: boolean
   lab?: boolean
   perception?: boolean
   mission?: boolean
@@ -114,8 +115,8 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
   const pickables: THREE.Mesh[] = []
   Object.values(models).forEach(model => model.root.traverse(node => { if (node instanceof THREE.Mesh) pickables.push(node) }))
   if (options.overview) {
-    quadruped.root.position.set(-.65, 0, .7)
-    humanoid.root.position.set(1.05, 0, -.65)
+    quadruped.root.position.set(options.comparison ? -1.25 : -.65, 0, options.comparison ? 0 : .7)
+    humanoid.root.position.set(1.05, 0, options.comparison ? 0 : -.65)
     // 远景装置形成真实空间纵深，场景装饰不作为感知点云。
     const structureGeometry = new THREE.BoxGeometry(.15, 3.4, .15)
     const structureMaterial = new THREE.MeshStandardMaterial({ color: '#253d57', metalness: .65, roughness: .45 })
@@ -184,11 +185,11 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     const fullscreen = !!document.fullscreenElement
     const compact = host.clientWidth <= 1100 && !fullscreen
     // 人形新增颈部与头部结构后，提高焦点给顶部名称标签留出空间。
-    const y = options.overview ? (compact ? 1.7 : .8) : human ? 1.14 : .5
+    const y = options.comparison ? 1 : options.overview ? (compact ? 1.7 : .8) : human ? 1.14 : .5
     const distance = human ? 1.14 : 1
     const positions: Record<CameraView, [number, number, number]> = { perspective: [2.65 * distance, 1.95 * distance, 3.15 * distance], front: [4.2 * distance, y + .15, .001], side: [.001, y + .15, 4.3 * distance], top: [.001, 5.5 * distance, .001] }
-    const target = options.overview ? new THREE.Vector3(compact || fullscreen ? 0 : -1.6, y, compact || fullscreen ? 0 : .7) : new THREE.Vector3(0, preset === 'top' ? 0 : y, 0)
-    const [x, py, z] = options.overview ? [target.x + 4.6, target.y + 2.3, target.z + 6.1] : positions[preset]
+    const target = options.overview ? new THREE.Vector3(compact || fullscreen || options.comparison ? 0 : -1.6, y, compact || fullscreen || options.comparison ? 0 : .7) : new THREE.Vector3(0, preset === 'top' ? 0 : y, 0)
+    const [x, py, z] = options.comparison ? [target.x + 3.2, target.y + 1.6, target.z + 4.2] : options.overview ? [target.x + 4.6, target.y + 2.3, target.z + 6.1] : positions[preset]
     const duration = animate && !matchMedia('(prefers-reduced-motion: reduce)').matches ? .75 : 0
     cameraTransitionUntil = performance.now() + duration * 1000
     gsap.to(camera.position, { x, y: py, z, duration, ease: 'power3.inOut', overwrite: true })
@@ -330,7 +331,7 @@ export function createScene(host: HTMLElement, read: () => SceneState, onStats: 
     if (perception && state.perception) perception.update(state.perception, camera, host.clientWidth, host.clientHeight, now)
     if (mission && state.mission) mission.update(state.mission, models[state.robot].root, camera, host.clientWidth, host.clientHeight)
     // 轻微相机视差仅用于首页默认视角，不改变机器人关节或用户操作后的视角。
-    if (options.overview && automaticView && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (options.overview && !options.comparison && automaticView && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       const offset = THREE.MathUtils.lerp(appliedParallax, parallax, Math.min(1, dt * 3))
       camera.position.x += offset - appliedParallax; appliedParallax = offset
     }
