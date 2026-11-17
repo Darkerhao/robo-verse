@@ -10,6 +10,10 @@ export const useSimulationStore = defineStore('simulation', () => {
   const snapshot = shallowRef(adapter.snapshot())
   const selectedId = ref<RobotId>('quadruped')
   const quality = ref<Quality>('high')
+  const qualityRevision = ref(0)
+  const soundEnabled = ref(false)
+  const soundSupported = typeof AudioContext !== 'undefined'
+  let audio: AudioContext | undefined
   const grid = ref(true)
   const connected = ref(false)
   const error = ref('')
@@ -51,8 +55,24 @@ export const useSimulationStore = defineStore('simulation', () => {
     try { await adapter.connect(); connected.value = true; log('仿真会话已启动 · 本地模拟设备就绪', 'info', 'SYSTEM') }
     catch (cause) { error.value = String(cause); unsubscribe(); unsubscribe = undefined }
   }
-  function stop() { unsubscribe?.(); unsubscribe = undefined; adapter.disconnect(); connected.value = false }
+  function stop() { unsubscribe?.(); unsubscribe = undefined; adapter.disconnect(); connected.value = false; soundEnabled.value = false; if (audio && audio.state !== 'closed') void audio.close().catch(() => log('音频资源关闭失败', 'warning', 'SYSTEM')); audio = undefined }
   onScopeDispose(stop)
+
+  // 声音仅反馈已接受的用户操作，使用本地短音，不添加持续背景音或外部资源。
+  function feedback(warning = false) {
+    if (!soundEnabled.value || !audio || audio.state !== 'running') return
+    const oscillator = audio.createOscillator(), gain = audio.createGain(), now = audio.currentTime
+    oscillator.frequency.value = warning ? 220 : 660
+    gain.gain.setValueAtTime(.035, now); gain.gain.exponentialRampToValueAtTime(.001, now + .09)
+    oscillator.connect(gain); gain.connect(audio.destination)
+    oscillator.onended = () => { oscillator.disconnect(); gain.disconnect() }
+    oscillator.start(now); oscillator.stop(now + .1)
+  }
+  async function toggleSound() {
+    if (soundEnabled.value) { soundEnabled.value = false; return }
+    try { audio ??= new AudioContext(); await audio.resume(); if (audio?.state === 'running') { soundEnabled.value = true; feedback() } }
+    catch { error.value = '无法启用声音反馈，请检查浏览器音频权限。' }
+  }
 
   function send(command: RobotCommand, message?: string) {
     try {
@@ -60,6 +80,7 @@ export const useSimulationStore = defineStore('simulation', () => {
       if (command.type === 'reset') { histories.value = { quadruped: [], humanoid: [] }; lastSampleBucket = -1 }
       error.value = ''
       if (message) log(message, command.type === 'emergency' ? 'warning' : 'info')
+      feedback(command.type === 'emergency')
       return true
     } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); log(error.value, 'warning'); return false }
   }
@@ -74,5 +95,5 @@ export const useSimulationStore = defineStore('simulation', () => {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
     log(`已导出 ${history.value.length} 条仿真遥测数据`)
   }
-  return { snapshot, selectedId, quality, grid, connected, error, events, histories, current, telemetry, definition, history, status, statusFor, uptime, start, stop, send, select, log, exportTelemetry }
+  return { snapshot, selectedId, quality, qualityRevision, soundEnabled, soundSupported, toggleSound, grid, connected, error, events, histories, current, telemetry, definition, history, status, statusFor, uptime, start, stop, send, select, log, exportTelemetry }
 })

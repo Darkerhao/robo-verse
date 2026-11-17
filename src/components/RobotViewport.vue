@@ -28,18 +28,22 @@ const hovered = ref<RobotId>()
 const hoveredPart = ref<RobotPart>()
 const selected = ref<RobotId>()
 const hoveredObject = ref<string>()
-const stats = ref<SceneStats>({ fps: 0, calls: 0, geometries: 0, textures: 0 })
+const stats = ref<SceneStats>({ fps: 0, calls: 0, geometries: 0, textures: 0, quality: sim.quality })
 const activeView = ref<CameraView>('perspective')
 let scene: ReturnType<typeof createScene> | undefined
 let mounted = true
+let initializing = false
 const views: { id: CameraView; label: string }[] = [{ id: 'perspective', label: '透视' }, { id: 'front', label: '正视' }, { id: 'side', label: '侧视' }, { id: 'top', label: '顶视' }]
 async function init() {
-  const selectedPart = props.lab ? lab.state.selectedPartId : null
-  scene?.dispose(); scene = undefined; error.value = ''; loading.value = true; progress.value = 0; hovered.value = undefined; hoveredPart.value = undefined; selected.value = undefined
-  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-  if (!mounted || !host.value) return
+  if (initializing) return
+  initializing = true
   try {
-    scene = createScene(host.value, () => ({ robot: sim.selectedId, robots: sim.snapshot.robots, paused: sim.snapshot.paused, grid: sim.grid, quality: sim.quality, lab: props.lab ? lab.state : undefined, perception: props.perception ? sim.snapshot.perception : undefined, mission: props.mission ? sim.snapshot.mission : undefined }), value => { stats.value = value }, message => { error.value = message; loading.value = false }, {
+    stats.value = { fps: 0, calls: 0, geometries: 0, textures: 0, quality: sim.quality }
+    const selectedPart = props.lab ? lab.state.selectedPartId : null
+    scene?.dispose(); scene = undefined; error.value = ''; loading.value = true; progress.value = 0; hovered.value = undefined; hoveredPart.value = undefined; selected.value = undefined
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    if (!mounted || !host.value) return
+    scene = createScene(host.value, () => ({ robot: sim.selectedId, robots: sim.snapshot.robots, paused: sim.snapshot.paused, grid: sim.grid, quality: sim.quality, qualityRevision: sim.qualityRevision, lab: props.lab ? lab.state : undefined, perception: props.perception ? sim.snapshot.perception : undefined, mission: props.mission ? sim.snapshot.mission : undefined }), value => { stats.value = value }, message => { error.value = message; loading.value = false }, {
       overview: props.overview || props.comparison,
       comparison: props.comparison,
       lab: props.lab,
@@ -60,7 +64,7 @@ async function init() {
     activeView.value = 'perspective'
   }
   catch (cause) { error.value = cause instanceof Error ? `无法启动三维场景：${cause.message}` : '无法启动 WebGL，请检查浏览器图形加速设置。' }
-  finally { if (error.value) loading.value = false }
+  finally { initializing = false; if (error.value) loading.value = false }
 }
 function changeView(view: CameraView) { activeView.value = view; scene?.view(view) }
 watch(() => sim.selectedId, () => { if (!props.overview) changeView('perspective') })
@@ -79,7 +83,7 @@ onUnmounted(() => { mounted = false; scene?.dispose() })
 <template>
   <section ref="panel" class="viewport panel" :class="{ 'hall-viewport': overview || comparison, 'perception-viewport': perception || mission }" :data-robot="overview || comparison ? 'both' : sim.selectedId" :data-render-stats="JSON.stringify(stats)" :data-load-progress="progress">
     <div ref="host" class="canvas-host" />
-    <div class="scene-top"><div class="scene-label"><span class="dot" /> {{ props.mission ? 'MISSION FIELD' : props.perception ? 'PERCEPTION FIELD' : props.lab ? 'HOLOGRAPHIC LAB' : 'LIVE SCENE' }} <span class="scene-slash">/</span><span>{{ props.mission ? missionScenes[missions[sim.snapshot.mission.id].scene].name : props.perception ? '感知训练场' : props.lab ? '机械结构探索' : '实验室环境' }}</span></div><div class="scene-tags"><span class="scene-tag">PBR</span><span class="scene-tag">{{ sim.quality.toUpperCase() }}</span><button class="scene-icon" title="切换全屏" aria-label="切换全屏" @click="fullscreen"><AppIcon name="expand" /></button></div></div>
+    <div class="scene-top"><div class="scene-label"><span class="dot" /> {{ props.mission ? 'MISSION FIELD' : props.perception ? 'PERCEPTION FIELD' : props.lab ? 'HOLOGRAPHIC LAB' : 'LIVE SCENE' }} <span class="scene-slash">/</span><span>{{ props.mission ? missionScenes[missions[sim.snapshot.mission.id].scene].name : props.perception ? '感知训练场' : props.lab ? '机械结构探索' : '实验室环境' }}</span></div><div class="scene-tags"><span class="scene-tag">PBR</span><span class="scene-tag" :title="stats.quality !== sim.quality ? '连续低帧率，已降低阴影与分辨率；可在画质设置点击应用画质重新采样' : '当前渲染画质'">{{ sim.quality.toUpperCase() }}<template v-if="!loading && stats.quality !== sim.quality"> → {{ stats.quality.toUpperCase() }} 自动</template></span><button class="scene-icon" title="切换全屏" aria-label="切换全屏" @click="fullscreen"><AppIcon name="expand" /></button></div></div>
     <div v-if="!overview && !comparison && !vision" class="model-label"><span class="eyebrow">{{ sim.definition.category }} · DIGITAL TWIN</span><h2>{{ sim.definition.name }}<span>{{ sim.selectedId === 'quadruped' ? 'QUADRUPED' : 'HUMANOID' }}</span></h2><span class="model-id mono">{{ sim.definition.serial }}</span></div>
     <div v-if="(overview || comparison) && (hovered || selected)" class="pick-label">{{ (hovered || selected) === 'quadruped' ? '四足机器人 / QUADRUPED' : '人形机器人 / HUMANOID' }}<small>点击聚焦 · 双击进入数字孪生</small></div>
     <div v-if="!overview && !comparison && !vision && hoveredPart" class="part-label" :data-part-id="hoveredPart.id"><span>{{ hoveredPart.name }}</span><small class="mono" :title="hoveredPart.id">{{ hoveredPart.id }}</small></div>

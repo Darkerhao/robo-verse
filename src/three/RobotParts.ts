@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
 export type PartKind = 'frame' | 'shell' | 'joint' | 'link' | 'power' | 'controller' | 'sensor' | 'cooling' | 'interface' | 'foot' | 'hand'
 export interface RobotPart { id: string; name: string; kind: PartKind; axes?: ('x' | 'y' | 'z')[] }
@@ -29,6 +30,34 @@ export function isObjectVisible(object: THREE.Object3D) {
   return true
 }
 
+/** 只合并同一部件的静态同材质实体，保留拾取、拆解与关节的原有边界。 */
+export function optimizeRobotGeometry(root: THREE.Group) {
+  root.traverse(parent => {
+    const batches = new Map<THREE.Material, THREE.Mesh[]>()
+    for (const node of parent.children) {
+      if (!(node instanceof THREE.Mesh) || node instanceof THREE.InstancedMesh || Array.isArray(node.material)) continue
+      const batch = batches.get(node.material) ?? []
+      batch.push(node); batches.set(node.material, batch)
+    }
+    for (const [material, batch] of batches) {
+      if (batch.length < 2) continue
+      const shapes = batch.map(mesh => {
+        mesh.updateMatrix()
+        return (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(mesh.matrix)
+      })
+      const geometry = mergeGeometries(shapes)
+      shapes.forEach(shape => shape.dispose())
+      if (!geometry) throw new Error(`机械部件几何合并失败：${parent.name}`)
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.name = `${parent.name}/batch-${parent.children.length}`
+      mesh.castShadow = true; mesh.receiveShadow = true
+      batch.forEach(node => parent.remove(node)); parent.add(mesh)
+    }
+  })
+  // 实体的局部装配不变；关节与部件 Group 仍按实际姿态/拆解实时更新。
+  root.traverse(node => { if (node instanceof THREE.Mesh) { node.updateMatrix(); node.matrixAutoUpdate = false } })
+}
+
 /** 两机型共用机械造型工具；每个模型内部复用几何/材质，由场景卸载统一释放。 */
 export function mechanicalParts() {
   const palette = {
@@ -56,7 +85,7 @@ export function mechanicalParts() {
     return object
   }
   function box(parent: THREE.Object3D, size: XYZ, position: XYZ, material: MaterialKey, radius = .025, name?: string) {
-    return mesh(parent, geometry(`box-${size}-${radius}`, () => new RoundedBoxGeometry(...size, 2, radius)), material, position, name)
+    return mesh(parent, geometry(`box-${size}-${radius}`, () => new RoundedBoxGeometry(...size, Math.min(...size) <= .03 ? 1 : 2, radius)), material, position, name)
   }
   function cylinder(parent: THREE.Object3D, radius: number, height: number, position: XYZ, material: MaterialKey, axis: 'y' | 'z' | 'x' = 'z') {
     const object = mesh(parent, geometry(`cylinder-${radius}-${height}`, () => new THREE.CylinderGeometry(radius, radius, height, 24)), material, position)

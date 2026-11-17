@@ -1,6 +1,6 @@
 # NEXT ROBOTICS · 下一代智能机器人数字孪生体验中心
 
-在浏览器中探索四足机器狗与人形机器人的三维交互平台。项目严格按 [ROLE.md](ROLE.md) 和 [MASTER_PROMPT.md](MASTER_PROMPT.md) 的九阶段规范增量开发，已完成前八阶段：视觉框架、机械模型、动作系统、全息实验室、AI 感知、自然语言控制、任务中心和数字孪生 HUD（含性能对比）。第九阶段性能优化与最终验收尚待实施。
+在浏览器中探索四足机器狗与人形机器人的三维交互平台。项目严格按 [ROLE.md](ROLE.md) 和 [MASTER_PROMPT.md](MASTER_PROMPT.md) 的九阶段规范增量开发，已完成九阶段主要能力：视觉框架、机械模型、动作系统、全息实验室、AI 感知、自然语言控制、任务中心、数字孪生 HUD（含性能对比）及第九阶段性能优化与最终回归。全部主要场景已实际操作验证；长期稳定60FPS和细项限制见最终报告。
 
 所有运动与参数均标记为 **SIMULATION**：使用本地运动学模拟，不连接真实设备，也不代表商业机器人性能。
 
@@ -168,6 +168,10 @@ src/
 
 ## 验证与后续
 
-当前阶段交付与测试结果见 [阶段八数字孪生 HUD](docs/STAGE-8-HUD.md) 和 [阶段八评审修复](docs/STAGE-8-REVIEW.md)，前阶段结果见 [阶段七任务中心验收](docs/STAGE-7-MISSIONS.md) 和 [阶段七评审修复](docs/STAGE-7-REVIEW.md)，历史结果见 [阶段六 AI 智能控制](docs/STAGE-6-AI-CONTROL.md)、[阶段六评审](docs/STAGE-6-REVIEW.md)、[阶段五 AI 感知系统](docs/STAGE-5-PERCEPTION.md)、 [阶段四全息实验室验收](docs/STAGE-4-LAB.md)、[阶段三动作系统验收](docs/STAGE-3-MOTION.md)、[阶段二模型验收](docs/STAGE-2-MODELS.md) 和 [规范对齐及阶段一验收](docs/ROLE-ALIGNMENT.md)，完整阶段状态见 [实施计划](task_plan.md)。[原工作台验收记录](docs/VERIFICATION.md) 仅保留旧版局部测试证据，不能作为九阶段最终验收结论。
+当前163项正式测试与生产浏览器最终回归见 [阶段九最终验收](docs/STAGE-9-FINAL-ACCEPTANCE.md)、[阶段九评审修复](docs/STAGE-9-REVIEW.md) 和 [架构说明](docs/ARCHITECTURE.md)。历史阶段交付与测试结果见 [阶段八数字孪生 HUD](docs/STAGE-8-HUD.md) 和 [阶段八评审修复](docs/STAGE-8-REVIEW.md)，前阶段结果见 [阶段七任务中心验收](docs/STAGE-7-MISSIONS.md) 和 [阶段七评审修复](docs/STAGE-7-REVIEW.md)，历史结果见 [阶段六 AI 智能控制](docs/STAGE-6-AI-CONTROL.md)、[阶段六评审](docs/STAGE-6-REVIEW.md)、[阶段五 AI 感知系统](docs/STAGE-5-PERCEPTION.md)、 [阶段四全息实验室验收](docs/STAGE-4-LAB.md)、[阶段三动作系统验收](docs/STAGE-3-MOTION.md)、[阶段二模型验收](docs/STAGE-2-MODELS.md) 和 [规范对齐及阶段一验收](docs/ROLE-ALIGNMENT.md)，完整阶段状态见 [实施计划](task_plan.md)。[原工作台验收记录](docs/VERIFICATION.md) 仅保留旧版局部测试证据，不能作为九阶段最终验收结论。
 
-下一阶段为阶段九“性能与最终验收”：基于当前GPU和帧率测量优化模型/动画/资源，完成全部主要场景回归与最终验收。阶段八的本机HIGH双机1600×900约4秒rAF样本为24.6 FPS；不能据此宣称达到60 FPS或完成跨设备验收。
+第九阶段已收尾：同部件几何合并、静态局部矩阵、刻度实例化、自动画质降级/重新应用、隐藏停帧、统一失败/卸载释放和手机顶栏复验。两机三角形减少35.2%，HIGH双机绘制调用846降至636。本机性能采样仍有28–60FPS差异，未证明全场景稳定60FPS，不以短测作为硬件性能承诺。
+
+画质设置中可点击“应用画质 · 重新采样”直接重试当前HIGH/MEDIUM/LOW档位；持续低帧率时，场景标签显示实际降级档位。声音反馈默认关闭，顶部声音按钮启用本地操作短音，无外部音效依赖。手机端品牌副标题收起，全部工具保留在一行。
+
+最终回归覆盖七个完整任务、31个动作、两机实验室/感知、AI顺序与拒绝、HUD/CSV、七尺寸和资源生命周期。实际边界：相机提供透视/正视/侧视/顶视四预设，未独立提供后视与双侧预设；工作台使用统一速度/动作控制，不提供四种独立运动模式。真实硬件、刚体动力学、自碰撞、ROS2/MQTT、跨浏览器及长期60FPS验证未完成。详细证据和下一步范围见最终验收报告。

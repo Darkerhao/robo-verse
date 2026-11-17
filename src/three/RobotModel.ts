@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { mechanicalParts, part } from './RobotParts'
+import { mechanicalParts, optimizeRobotGeometry, part } from './RobotParts'
 import { armDimensions, joints, rigs } from '@/config/joints'
 import { sensorMounts } from '@/config/perception'
 import { blendPoses, copyPose } from '@/simulation/kinematics'
@@ -227,6 +227,7 @@ export function createRobot(id: RobotId): RobotModel {
     }
   }
 
+  optimizeRobotGeometry(root)
   const bindings = joints[id].map(definition => {
     const node = root.getObjectByName(definition.path)
     if (!node) throw new Error(`缺少机械关节节点：${definition.path}`)
